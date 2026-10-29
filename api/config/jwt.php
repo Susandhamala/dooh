@@ -171,8 +171,8 @@ return [
     */
 
     'persistent_claims' => [
-        // 'foo',
-        // 'bar',
+        // Keep the two-factor step-up across token refreshes.
+        'mfa',
     ],
 
     /*

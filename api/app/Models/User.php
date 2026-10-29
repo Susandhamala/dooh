@@ -2,11 +2,12 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\HasPublicUuid;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
-use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use PHPOpenSourceSaver\JWTAuth\Contracts\JWTSubject;
@@ -17,7 +18,7 @@ use Spatie\Permission\Traits\HasRoles;
 class User extends Authenticatable implements JWTSubject
 {
     /** @use HasFactory<UserFactory> */
-    use HasFactory, HasRoles, HasUuids, Notifiable;
+    use HasFactory, HasPublicUuid, HasRoles, Notifiable;
 
     public const STATUS_ACTIVE = 'active';
 
@@ -25,16 +26,7 @@ class User extends Authenticatable implements JWTSubject
 
     protected string $guard_name = 'api';
 
-    /** Public identifier; the integer id never leaves the API. */
-    public function uniqueIds(): array
-    {
-        return ['uuid'];
-    }
-
-    public function getRouteKeyName(): string
-    {
-        return 'uuid';
-    }
+    protected $attributes = ['status' => self::STATUS_ACTIVE];
 
     /** Tokens carry the UUID, and the guard looks users up by it. */
     public function getAuthIdentifierName(): string
@@ -50,6 +42,21 @@ class User extends Authenticatable implements JWTSubject
     public function getJWTCustomClaims(): array
     {
         return [];
+    }
+
+    public function organisations(): BelongsToMany
+    {
+        return $this->belongsToMany(Organisation::class, 'memberships')->withPivot('role')->withTimestamps();
+    }
+
+    public function hasMfa(): bool
+    {
+        return $this->mfa_enabled_at !== null;
+    }
+
+    public function isActive(): bool
+    {
+        return $this->status === self::STATUS_ACTIVE;
     }
 
     protected function casts(): array

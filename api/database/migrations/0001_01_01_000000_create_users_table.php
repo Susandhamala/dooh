@@ -23,6 +23,8 @@ return new class extends Migration
             $table->string('password')->nullable();
             $table->text('mfa_secret')->nullable();
             $table->timestamp('mfa_enabled_at')->nullable();
+            // Last accepted TOTP time step, so a code can't be replayed inside its window.
+            $table->unsignedBigInteger('mfa_last_timestep')->nullable();
             $table->string('status', 20)->default('active');
             $table->rememberToken();
             $table->timestamps();

@@ -1,5 +1,8 @@
 <?php
 
+use App\Exceptions\DomainError;
+use App\Http\Middleware\EnsureUserIsActive;
+use App\Http\Middleware\RequireMfa;
 use App\Http\Responses\ApiResponse;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
@@ -9,6 +12,7 @@ use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
+use Spatie\Permission\Middleware\RoleMiddleware;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
@@ -20,12 +24,17 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        //
+        $middleware->alias([
+            'active' => EnsureUserIsActive::class,
+            'mfa' => RequireMfa::class,
+            'role' => RoleMiddleware::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $isApi = fn (Request $request) => $request->is('api/*') || $request->expectsJson();
 
         $exceptions->shouldRenderJsonWhen($isApi);
+        $exceptions->dontReport(DomainError::class);
 
         // Every API error uses the same envelope as successful responses.
         $exceptions->render(function (Throwable $e, Request $request) use ($isApi) {
@@ -34,6 +43,7 @@ return Application::configure(basePath: dirname(__DIR__))
             }
 
             return match (true) {
+                $e instanceof DomainError => ApiResponse::error($e->getMessage(), $e->status, $e->errors),
                 $e instanceof ValidationException => ApiResponse::error($e->getMessage(), 422, $e->errors()),
                 $e instanceof AuthenticationException => ApiResponse::error('Unauthenticated.', 401),
                 $e instanceof AuthorizationException => ApiResponse::error('Forbidden.', 403),

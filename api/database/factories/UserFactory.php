@@ -42,4 +42,15 @@ class UserFactory extends Factory
             'email_verified_at' => null,
         ]);
     }
+
+    /** Two-factor enrolled with a known secret, for tests. */
+    public function withMfa(string $secret = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP'): static
+    {
+        return $this->state(fn () => ['mfa_secret' => $secret, 'mfa_enabled_at' => now()]);
+    }
+
+    public function suspended(): static
+    {
+        return $this->state(fn () => ['status' => 'suspended']);
+    }
 }

@@ -27,8 +27,14 @@
         <env name="JWT_SECRET" value="testing-secret-not-for-production-use-0123456789"/>
         <env name="BROADCAST_CONNECTION" value="null"/>
         <env name="CACHE_STORE" value="array"/>
-        <env name="DB_CONNECTION" value="sqlite"/>
-        <env name="DB_DATABASE" value=":memory:"/>
+        <env name="LAB_LOCAL_LOGIN" value="true"/>
+        <env name="RENTALL_BASE_URL" value="https://rentall.test"/>
+        <env name="RENTALL_SSO_CLIENT_SECRET" value="test-client-secret"/>
+        <env name="DB_CONNECTION" value="pgsql"/>
+        <env name="DB_HOST" value="127.0.0.1"/>
+        <env name="DB_USERNAME" value="dooh"/>
+        <env name="DB_PASSWORD" value="labpass123"/>
+        <env name="DB_DATABASE" value="dooh_test"/>
         <env name="DB_URL" value=""/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
