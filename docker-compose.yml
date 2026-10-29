@@ -1,0 +1,81 @@
+name: dooh
+
+x-api: &api
+  build: { context: ., dockerfile: infra/docker/api/Dockerfile }
+  env_file: api/.env
+  depends_on:
+    postgres: { condition: service_healthy }
+    redis: { condition: service_started }
+  networks: [backend]
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: dooh
+      POSTGRES_USER: dooh
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dooh"]
+      interval: 5s
+    networks: [backend]
+
+  redis:
+    image: redis:7-alpine
+    networks: [backend]
+
+  api:
+    <<: *api
+    volumes:
+      - media:/var/www/api/storage/app
+
+  queue:
+    <<: *api
+    command: php artisan queue:work --tries=3
+    volumes:
+      - media:/var/www/api/storage/app
+
+  scheduler:
+    <<: *api
+    command: php artisan schedule:work
+
+  web:
+    build: { context: ., dockerfile: infra/docker/web/Dockerfile }
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+    volumes:
+      - ./infra/ca/out/ca.crt:/etc/nginx/certs/ca.crt:ro
+      - ./infra/ca/out/server.crt:/etc/nginx/certs/server.crt:ro
+      - ./infra/ca/out/server.key:/etc/nginx/certs/server.key:ro
+    depends_on: [api]
+    networks: [backend, devices]
+
+  # Emulated screens for the lab. Start with: make lab
+  player-1:
+    profiles: [lab]
+    build: { context: ., dockerfile: infra/docker/player/Dockerfile }
+    environment:
+      DOOH_API: https://web:8443
+      DOOH_SCREEN_ID: ${LAB_SCREEN_1_ID:-}
+      DOOH_SIGNING_PUBKEY: ${MANIFEST_SIGNING_PUBKEY:-}
+      DOOH_CERT: /etc/dooh/device.crt
+      DOOH_KEY: /etc/dooh/device.key
+      DOOH_CA: /etc/dooh/ca.crt
+    volumes:
+      - ./infra/ca/out/player-1.crt:/etc/dooh/device.crt:ro
+      - ./infra/ca/out/player-1.key:/etc/dooh/device.key:ro
+      - ./infra/ca/out/ca.crt:/etc/dooh/ca.crt:ro
+    networks: [devices]
+
+volumes:
+  pgdata:
+  media:
+
+networks:
+  backend:
+  # Screens only see the web container, never the database or API internals.
+  devices:

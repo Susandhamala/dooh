@@ -1,0 +1,8 @@
+@import 'tailwindcss';
+
+/* Design tokens — replace with rentallnepal's so the portal reads as one product. */
+@theme {
+  --color-brand: #0f766e;
+  --color-brand-dark: #115e59;
+  --font-sans: 'Inter', system-ui, sans-serif;
+}

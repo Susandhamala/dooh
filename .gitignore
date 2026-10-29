@@ -4,3 +4,7 @@ node_modules/
 dist/
 __pycache__/
 .venv/
+infra/ca/out/
+player/.venv/
+*.egg-info/
+.pytest_cache/
