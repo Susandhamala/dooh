@@ -15,7 +15,55 @@ Full plan: [docs/PLAN.md](docs/PLAN.md).
 | `player/` | Python screen player agent (runs on the Pi, or in Docker as an emulated screen) |
 | `infra/` | Docker images, Nginx config, lab certificate authority scripts |
 
-## Quick start (lab)
+## Run it on your computer
+
+You need PHP 8.3+ (with `pdo_pgsql`, `sodium`, `gd`), Composer, Node 22, Python 3.11+ and PostgreSQL.
+
+```bash
+git clone https://github.com/Susandhamala/dooh.git
+cd dooh
+```
+
+Database (once):
+
+```bash
+createuser -P dooh          # choose a password
+createdb -O dooh dooh
+createdb -O dooh dooh_test
+```
+
+API:
+
+```bash
+cd api
+composer install
+cp .env.example .env        # set DB_HOST=127.0.0.1, DB_PASSWORD, LAB_LOCAL_LOGIN=true
+php artisan key:generate
+php artisan jwt:secret
+php artisan migrate --seed
+php artisan serve           # http://localhost:8000
+```
+
+Portal (second terminal):
+
+```bash
+cd portal
+npm install
+cp .env.example .env
+npm run dev                 # http://localhost:5173, proxies /api to :8000
+```
+
+Player tests:
+
+```bash
+cd player
+python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
+.venv/bin/pytest
+```
+
+API tests use the `dooh_test` database with the credentials in `api/phpunit.xml`.
+
+## Quick start (Docker lab)
 
 ```bash
 cp .env.example .env
