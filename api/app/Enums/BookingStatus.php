@@ -22,6 +22,12 @@ enum BookingStatus: string
 
     public function isCancellable(): bool
     {
-        return in_array($this, [self::Draft, self::Checking, self::AwaitingOwner, self::Approved, self::Scheduled], true);
+        return in_array($this, [self::Draft, self::Checking, self::AwaitingOwner, self::Approved, self::Scheduled, self::Live], true);
+    }
+
+    /** Still holding money in the wallet (not yet finished, cancelled or rejected). */
+    public function holdsMoney(): bool
+    {
+        return ! in_array($this, [self::Completed, self::Rejected, self::Cancelled], true);
     }
 }

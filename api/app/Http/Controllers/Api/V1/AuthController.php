@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\LoginRequest;
 use App\Http\Requests\Auth\MfaCodeRequest;
+use App\Http\Requests\Auth\PhoneCodeRequest;
+use App\Http\Requests\Auth\PhoneLoginRequest;
 use App\Http\Requests\Auth\RegisterRequest;
 use App\Http\Requests\Auth\SsoExchangeRequest;
 use App\Http\Resources\UserResource;
@@ -27,6 +29,19 @@ class AuthController extends Controller
     public function login(LoginRequest $request): JsonResponse
     {
         return $this->session($this->auth->login($request->input('email'), $request->input('password')), 'Signed in.');
+    }
+
+    public function phoneCode(PhoneCodeRequest $request): JsonResponse
+    {
+        return ApiResponse::success($this->auth->sendPhoneCode($request->input('phone')), 'We sent a 6-digit code by SMS.');
+    }
+
+    public function phoneLogin(PhoneLoginRequest $request): JsonResponse
+    {
+        return $this->session(
+            $this->auth->loginWithPhone($request->input('phone'), $request->input('code'), $request->input('name')),
+            'Signed in.',
+        );
     }
 
     public function sso(SsoExchangeRequest $request): JsonResponse

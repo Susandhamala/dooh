@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { get, post, setToken, setUnauthorizedHandler } from '@/lib/http'
+import { get, isUnauthorized, post, setToken, setUnauthorizedHandler } from '@/lib/http'
 import { session } from '@/lib/storage'
 import type { Role, Session, User } from '@/lib/types'
 
@@ -33,8 +33,13 @@ export const useAuthStore = defineStore('auth', () => {
   async function refresh(): Promise<void> {
     try {
       apply((await post<{ token: string; expires_in: number }>('/auth/refresh')).data)
-    } catch {
-      signOut()
+    } catch (err) {
+      // Only a rejected token ends the session; a dropped connection or a busy server retries shortly.
+      if (isUnauthorized(err)) signOut()
+      else if (token.value) {
+        clearTimeout(refreshTimer)
+        refreshTimer = setTimeout(refresh, 30_000)
+      }
     }
   }
 
@@ -42,17 +47,26 @@ export const useAuthStore = defineStore('auth', () => {
   async function restore(): Promise<void> {
     const raw = session.get(KEY)
     if (!raw) return
+    let saved: { token: string; user?: User | null; mfa?: boolean }
     try {
-      const saved = JSON.parse(raw) as { token: string }
-      setToken(saved.token)
-      token.value = saved.token
+      saved = JSON.parse(raw)
+    } catch {
+      session.remove(KEY)
+      return
+    }
+    setToken(saved.token)
+    token.value = saved.token
+    try {
       const me = await get<User>('/auth/me')
       user.value = me.data
       mfaVerified.value = me.meta?.mfa_verified === true
-      await refresh()
-    } catch {
-      signOut()
+    } catch (err) {
+      if (isUnauthorized(err)) return signOut()
+      // The API is unreachable for now: keep the tab signed in with what we saved.
+      user.value = saved.user ?? null
+      mfaVerified.value = saved.mfa === true
     }
+    await refresh()
   }
 
   async function signOut(): Promise<void> {
@@ -69,6 +83,15 @@ export const useAuthStore = defineStore('auth', () => {
     return user.value?.roles.includes(role) ?? false
   }
 
+  /** Re-read the user after something changes their state (terms accepted, document sent, role added). */
+  async function reloadMe(): Promise<void> {
+    if (!token.value) return
+    const me = await get<User>('/auth/me')
+    user.value = me.data
+    mfaVerified.value = me.meta?.mfa_verified === true
+    session.set(KEY, JSON.stringify({ token: token.value, user: user.value, mfa: mfaVerified.value }))
+  }
+
   setUnauthorizedHandler(() => {
     clearTimeout(refreshTimer)
     token.value = null
@@ -77,5 +100,5 @@ export const useAuthStore = defineStore('auth', () => {
     session.remove(KEY)
   })
 
-  return { user, token, mfaVerified, isLoggedIn, signIn, signOut, restore, refresh, hasRole }
+  return { user, token, mfaVerified, isLoggedIn, signIn, signOut, restore, refresh, hasRole, reloadMe }
 })

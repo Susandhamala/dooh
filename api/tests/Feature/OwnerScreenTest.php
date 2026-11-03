@@ -9,7 +9,7 @@ beforeEach(function () {
     $this->payload = [
         'name' => 'New Road Junction', 'lat' => 27.7041, 'lng' => 85.3075,
         'width_px' => 1920, 'height_px' => 1080, 'orientation' => 'landscape',
-        'slot_price' => 750, 'content_rules' => ['no_alcohol', 'no_political'],
+        'price_per_play' => 3.5, 'content_rules' => ['no_alcohol', 'no_political'],
     ];
 });
 

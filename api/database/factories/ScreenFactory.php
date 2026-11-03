@@ -21,7 +21,7 @@ class ScreenFactory extends Factory
             'orientation' => 'landscape',
             'loop_seconds' => 120,
             'spot_seconds' => 10,
-            'slot_price' => 500,
+            'price_per_play' => 2,
             'status' => 'active',
         ];
     }

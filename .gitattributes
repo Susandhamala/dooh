@@ -1,0 +1,7 @@
+# Keep LF everywhere: scripts and configs run inside Linux containers and on the Pi.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.mp4 binary

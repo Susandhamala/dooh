@@ -2,6 +2,7 @@
 
 namespace App\Repositories;
 
+use App\Models\TermsAcceptance;
 use App\Models\User;
 
 class UserRepository
@@ -11,6 +12,11 @@ class UserRepository
         return User::where('email', mb_strtolower($email))->first();
     }
 
+    public function findByPhone(string $e164): ?User
+    {
+        return User::where('phone', $e164)->first();
+    }
+
     public function findByRentallUuid(string $uuid): ?User
     {
         return User::where('rentall_uuid', $uuid)->first();
@@ -18,9 +24,21 @@ class UserRepository
 
     public function create(array $attributes): User
     {
-        $attributes['email'] = mb_strtolower($attributes['email']);
+        if (isset($attributes['email'])) {
+            $attributes['email'] = mb_strtolower($attributes['email']);
+        }
 
         return User::create($attributes);
+    }
+
+    public function hasAcceptedTerms(User $user, string $version): bool
+    {
+        return $user->termsAcceptances()->where('version', $version)->exists();
+    }
+
+    public function recordTerms(User $user, array $attributes): TermsAcceptance
+    {
+        return $user->termsAcceptances()->firstOrCreate(['version' => $attributes['version']], $attributes);
     }
 
     public function save(User $user): User

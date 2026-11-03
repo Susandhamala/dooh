@@ -19,5 +19,10 @@ onMounted(() => {
 </script>
 
 <template>
-  <p class="text-slate-600">Redirecting to rentallnepal…</p>
+  <div class="shell flex justify-center py-20">
+    <div class="flex flex-col items-center text-center" role="status">
+      <span class="h-10 w-10 animate-spin rounded-full border-4 border-plum-200 border-t-plum-700" aria-hidden="true" />
+      <p class="mt-4 font-semibold text-ink-soft">Taking you to RentALL Nepal…</p>
+    </div>
+  </div>
 </template>

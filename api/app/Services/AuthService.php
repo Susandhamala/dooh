@@ -2,15 +2,60 @@
 
 namespace App\Services;
 
+use App\Enums\OrganisationType;
 use App\Exceptions\DomainError;
 use App\Models\User;
 use App\Repositories\UserRepository;
+use App\Support\NepaliPhone;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use PHPOpenSourceSaver\JWTAuth\JWTGuard;
 
 class AuthService
 {
-    public function __construct(private UserRepository $users) {}
+    public function __construct(
+        private UserRepository $users,
+        private PhoneOtpService $otp,
+        private OrganisationService $orgs,
+    ) {}
+
+    /** Text a one-time code to a Nepali mobile number. */
+    public function sendPhoneCode(string $phone): array
+    {
+        return $this->otp->send($this->phone($phone));
+    }
+
+    /**
+     * Sign in with phone + code. A new number becomes a new account, which needs a name; it gets
+     * its own advertiser organisation so it can load money and book straight away.
+     */
+    public function loginWithPhone(string $phoneInput, string $code, ?string $name): array
+    {
+        $phone = $this->phone($phoneInput);
+        $user = $this->users->findByPhone($phone);
+
+        if (! $user && blank($name)) {
+            // Check the code first (without using it up) so the name step only appears for a real code.
+            $this->otp->verify($phone, $code, consume: false);
+            throw new DomainError('Tell us your name to finish creating your account.', 422, ['name' => ['Enter your name.']]);
+        }
+
+        $this->otp->verify($phone, $code);
+
+        if (! $user) {
+            $user = DB::transaction(function () use ($phone, $name) {
+                $user = $this->users->create(['name' => trim((string) $name), 'phone' => $phone, 'phone_verified_at' => now()]);
+                $this->orgs->create($user, ['name' => trim((string) $name), 'type' => OrganisationType::Advertiser->value]);
+
+                return $user;
+            });
+        } elseif (! $user->phone_verified_at) {
+            $user->phone_verified_at = now();
+            $this->users->save($user);
+        }
+
+        return $this->issue($user);
+    }
 
     /** Lab-only local sign-up; real users arrive through rentallnepal SSO. */
     public function register(array $data): array
@@ -78,6 +123,12 @@ class AuthService
     public function logout(): void
     {
         $this->guard()->logout();
+    }
+
+    private function phone(string $input): string
+    {
+        return NepaliPhone::normalise($input)
+            ?? throw new DomainError('Enter a valid Nepali mobile number.', 422, ['phone' => ['Enter a valid Nepali mobile number, like 98XXXXXXXX.']]);
     }
 
     private function ensureLabLogin(): void

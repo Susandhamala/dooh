@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 #[Fillable(['name', 'type', 'pan_number'])]
 #[Hidden(['id'])]
@@ -35,6 +36,21 @@ class Organisation extends Model
     public function campaigns(): HasMany
     {
         return $this->hasMany(Campaign::class);
+    }
+
+    public function wallet(): HasOne
+    {
+        return $this->hasOne(Wallet::class);
+    }
+
+    public function creatives(): HasMany
+    {
+        return $this->hasMany(Creative::class);
+    }
+
+    public function bookings(): HasMany
+    {
+        return $this->hasMany(Booking::class);
     }
 
     public function isVerified(): bool

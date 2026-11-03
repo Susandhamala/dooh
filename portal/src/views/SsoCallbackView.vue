@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import AlertBox from '@/components/ui/AlertBox.vue'
 import { errorMessage, post } from '@/lib/http'
 import { session } from '@/lib/storage'
 import type { Session } from '@/lib/types'
@@ -38,11 +39,15 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="mx-auto max-w-sm">
-    <p v-if="!error" class="text-slate-600">Signing you in…</p>
-    <div v-else class="card">
-      <p class="text-sm text-red-600">{{ error }}</p>
-      <RouterLink to="/login" class="btn mt-4">Back to sign in</RouterLink>
+  <div class="shell flex justify-center py-20">
+    <div v-if="!error" class="flex flex-col items-center text-center" role="status">
+      <span class="h-10 w-10 animate-spin rounded-full border-4 border-plum-200 border-t-plum-700" aria-hidden="true" />
+      <p class="mt-4 font-semibold text-ink-soft">Signing you in…</p>
     </div>
-  </section>
+    <div v-else class="card w-full max-w-[420px] p-6">
+      <h1 class="h-section">We couldn’t sign you in</h1>
+      <AlertBox class="mt-4">{{ error }}</AlertBox>
+      <RouterLink to="/login" class="btn-primary mt-5 w-full">Back to sign in</RouterLink>
+    </div>
+  </div>
 </template>

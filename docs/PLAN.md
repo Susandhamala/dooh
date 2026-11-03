@@ -156,3 +156,18 @@ phase 4 (real payments, more screens), never from phase 2.
 - [x] rentallnepal uses jwt-auth; ads app reuses it through the one-time code exchange.
 - [ ] Pricing model: per slot, per day, or per 1,000 plays?
 - [ ] Ad types: images and video only, or HTML templates and live content too?
+
+## Decisions, 30 Oct 2026
+
+These change the plan above; the code follows them.
+
+| Topic | Was | Now |
+|---|---|---|
+| Sign-in | rentallnepal SSO (+ lab email login) | Nepali mobile number (96x/97x/98x) + 6-digit SMS code. A new number gets an advertiser organisation. rentallnepal SSO stays as a second option. SMS goes to the log until a gateway (Sparrow / Aakash) is added. |
+| Terms | Not covered | Everyone accepts a versioned terms and content policy (sexual content, violence, weapons, harassment, fraud, rights) before loading money, uploading or booking. Stored with version, text hash, time, IP and user agent. Each upload also needs a content declaration. |
+| Identity | Simulated document check | Real upload (citizenship, national ID, passport, driving licence, company registration, PAN/VAT), encrypted at rest, opened only through a 10-minute signed link, deleted once decided. Booking needs a submitted document; approving an ad needs the uploader's document approved. |
+| Who approves ads | Screen owner | The RentALL review team ("ad agency", admin role + two-factor) watches every ad and approves it or refuses it with a reason the advertiser sees. Owners' content rules are enforced automatically by ad category. |
+| Pricing | Per slot per day, fake Pay button | Prepaid wallet per advertiser organisation. Screens have a price per play. Booking holds days × hours × plays per hour × price per play; each play is charged from the hold; the unplayed rest is released at the end, on cancel or on rejection. Top-ups are simulated (eSewa, Khalti, bank). |
+| Booking | Whole days | Same hour window on each day of a date range; the database exclusion constraint covers screen, slot, dates and hours. |
+| Campaigns | Required | Optional grouping; bookings belong to the organisation. |
+| Proof of play | Device-signed logs | `play_logs` (one row per play, unique per booking and time, charged once). Until real players report, `plays:simulate` (lab, `SIMULATE_PLAYS=true`) records due plays every 10 minutes. |

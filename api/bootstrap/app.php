@@ -1,6 +1,7 @@
 <?php
 
 use App\Exceptions\DomainError;
+use App\Http\Middleware\EnsureTermsAccepted;
 use App\Http\Middleware\EnsureUserIsActive;
 use App\Http\Middleware\RequireMfa;
 use App\Http\Responses\ApiResponse;
@@ -28,6 +29,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'active' => EnsureUserIsActive::class,
             'mfa' => RequireMfa::class,
             'role' => RoleMiddleware::class,
+            'terms' => EnsureTermsAccepted::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

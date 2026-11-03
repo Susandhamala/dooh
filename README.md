@@ -63,6 +63,20 @@ python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 
 API tests use the `dooh_test` database with the credentials in `api/phpunit.xml`.
 
+## Windows (Docker Desktop, no PHP or make needed)
+
+```bash
+cp .env.example .env                 # set DB_PASSWORD
+cp api/.env.example api/.env         # same DB_PASSWORD; APP_KEY and JWT_SECRET: any random base64 / hex
+                                     # lab: LAB_LOCAL_LOGIN=true OTP_EXPOSE_CODE=true SIMULATE_PLAYS=true
+bash infra/ca/lab-ca.sh init         # Git Bash
+docker compose up -d --build
+docker compose exec api php artisan migrate --seed
+```
+
+Sign in at http://localhost:8080 with any 98XXXXXXXX number; in lab mode the SMS code is shown on screen.
+Make someone a reviewer: `docker compose exec api php artisan dooh:make-admin 98XXXXXXXX` (they then set up two-factor).
+
 ## Quick start (Docker lab)
 
 ```bash

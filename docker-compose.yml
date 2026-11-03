@@ -34,7 +34,7 @@ services:
 
   queue:
     <<: *api
-    command: php artisan queue:work --tries=3
+    command: php artisan queue:work --tries=2 --timeout=900
     volumes:
       - media:/var/www/api/storage/app
 

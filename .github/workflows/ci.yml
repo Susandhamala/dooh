@@ -16,8 +16,9 @@ jobs:
         options: --health-cmd "pg_isready -U dooh" --health-interval 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - uses: shivammathur/setup-php@v2
-        with: { php-version: '8.4', extensions: pdo_pgsql, sodium, gd }
+        with: { php-version: '8.4', extensions: 'pdo_pgsql, sodium, gd, fileinfo, intl' }
       - run: composer install --no-interaction --prefer-dist
       - run: cp .env.example .env && php artisan key:generate
       - run: ./vendor/bin/pint --test

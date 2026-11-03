@@ -8,16 +8,19 @@ cd "$(dirname "$0")"
 OUT=out
 mkdir -p "$OUT"
 umask 077
+# Git Bash on Windows rewrites "/CN=..." into a file path; this turns that off.
+export MSYS_NO_PATHCONV=1
 
+# Extensions go through files, not <(...): Windows openssl cannot open bash's /dev/fd pipes.
 case "${1:-}" in
   init)
     openssl req -x509 -newkey ed25519 -nodes -days 3650 -subj "/CN=Rentall Screen Ads Lab CA" \
       -keyout "$OUT/ca.key" -out "$OUT/ca.crt"
     openssl req -newkey ed25519 -nodes -subj "/CN=localhost" \
       -keyout "$OUT/server.key" -out "$OUT/server.csr"
+    printf 'subjectAltName=DNS:localhost,DNS:web\nextendedKeyUsage=serverAuth\n' > "$OUT/server.ext"
     openssl x509 -req -in "$OUT/server.csr" -CA "$OUT/ca.crt" -CAkey "$OUT/ca.key" -CAcreateserial \
-      -days 825 -extfile <(printf "subjectAltName=DNS:localhost,DNS:web\nextendedKeyUsage=serverAuth") \
-      -out "$OUT/server.crt"
+      -days 825 -extfile "$OUT/server.ext" -out "$OUT/server.crt"
     chmod 644 "$OUT/ca.crt" "$OUT/server.crt" "$OUT/server.key"
     echo "CA and server cert written to $(pwd)/$OUT"
     ;;
@@ -25,8 +28,9 @@ case "${1:-}" in
     name="${2:?device name required}"
     openssl req -newkey ed25519 -nodes -subj "/CN=$name" \
       -keyout "$OUT/$name.key" -out "$OUT/$name.csr"
+    printf 'extendedKeyUsage=clientAuth\n' > "$OUT/client.ext"
     openssl x509 -req -in "$OUT/$name.csr" -CA "$OUT/ca.crt" -CAkey "$OUT/ca.key" -CAcreateserial \
-      -days 365 -extfile <(printf "extendedKeyUsage=clientAuth") -out "$OUT/$name.crt"
+      -days 365 -extfile "$OUT/client.ext" -out "$OUT/$name.crt"
     echo "fingerprint: $(openssl x509 -in "$OUT/$name.crt" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d : | tr A-F a-f)"
     ;;
   *)

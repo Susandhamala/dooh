@@ -48,6 +48,28 @@ export async function patch<T>(url: string, body?: unknown): Promise<Envelope<T>
   return (await http.patch<Envelope<T>>(url, body)).data
 }
 
+export async function del<T>(url: string): Promise<Envelope<T>> {
+  return (await http.delete<Envelope<T>>(url)).data
+}
+
+/** Multipart upload with progress (0–100). */
+export async function upload<T>(url: string, form: FormData, onProgress?: (pct: number) => void): Promise<Envelope<T>> {
+  return (
+    await http.post<Envelope<T>>(url, form, {
+      onUploadProgress: (e) => onProgress?.(e.total ? Math.round((e.loaded / e.total) * 100) : 0),
+    })
+  ).data
+}
+
+/** What a 403 says is missing before this action: accepted terms, or an identity document. */
+export function gateNeeded(err: unknown): 'terms' | 'document' | null {
+  const errors = (err as AxiosError<Envelope<unknown>>).response?.data?.errors
+  if ((err as AxiosError).response?.status !== 403 || !errors) return null
+  if (errors.terms) return 'terms'
+  if (errors.document) return 'document'
+  return null
+}
+
 export function errorMessage(err: unknown): string {
   const e = err as AxiosError<Envelope<unknown>>
   return e.response?.data?.message ?? e.message ?? 'Something went wrong'
@@ -57,6 +79,11 @@ export function errorMessage(err: unknown): string {
 export function fieldErrors(err: unknown): Record<string, string> {
   const errors = (err as AxiosError<Envelope<unknown>>).response?.data?.errors ?? {}
   return Object.fromEntries(Object.entries(errors).map(([k, v]) => [k, v[0] ?? '']))
+}
+
+/** True when the API rejected the token itself (expired, revoked, suspended), not a network or server hiccup. */
+export function isUnauthorized(err: unknown): boolean {
+  return (err as AxiosError).response?.status === 401
 }
 
 /** What a 403 says about two-factor: 'setup', 'verify' or null. */

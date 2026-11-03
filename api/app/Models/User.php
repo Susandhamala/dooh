@@ -8,12 +8,13 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use PHPOpenSourceSaver\JWTAuth\Contracts\JWTSubject;
 use Spatie\Permission\Traits\HasRoles;
 
-#[Fillable(['name', 'email', 'phone', 'password', 'rentall_uuid'])]
+#[Fillable(['name', 'email', 'phone', 'phone_verified_at', 'password', 'rentall_uuid'])]
 #[Hidden(['id', 'password', 'remember_token', 'mfa_secret'])]
 class User extends Authenticatable implements JWTSubject
 {
@@ -47,6 +48,16 @@ class User extends Authenticatable implements JWTSubject
     public function organisations(): BelongsToMany
     {
         return $this->belongsToMany(Organisation::class, 'memberships')->withPivot('role')->withTimestamps();
+    }
+
+    public function identityDocuments(): HasMany
+    {
+        return $this->hasMany(IdentityDocument::class);
+    }
+
+    public function termsAcceptances(): HasMany
+    {
+        return $this->hasMany(TermsAcceptance::class);
     }
 
     public function hasMfa(): bool

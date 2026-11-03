@@ -41,15 +41,19 @@ it('hides a non-public screen from the detail endpoint', function () {
     $this->getJson("/api/v1/screens/{$draft->uuid}")->assertNotFound();
 });
 
-it('reports free slots per day', function () {
+it('reports free slots for every bookable hour of every day', function () {
     $screen = Screen::factory()->slots(3)->create();
     $from = now()->addDays(2)->toDateString();
     $to = now()->addDays(4)->toDateString();
 
-    $this->getJson("/api/v1/screens/{$screen->uuid}/availability?from={$from}&to={$to}")
+    $data = $this->getJson("/api/v1/screens/{$screen->uuid}/availability?from={$from}&to={$to}")
         ->assertOk()
         ->assertJsonPath('data.slots_per_loop', 3)
-        ->assertJsonPath("data.days.{$from}", 3);
+        ->json('data');
+
+    expect($data['hours'])->toBe(range(6, 21))
+        ->and($data['days'])->toHaveCount(3)
+        ->and($data['days'][$from])->toBe(array_fill(0, 16, 3));
 });
 
 it('caps the availability window', function () {

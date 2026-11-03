@@ -29,7 +29,7 @@ class ScreenRequest extends FormRequest
             'closes_at' => ['sometimes', 'date_format:H:i'],
             'loop_seconds' => ['sometimes', 'integer', 'between:10,3600'],
             'spot_seconds' => ['sometimes', 'integer', 'between:5,120'],
-            'slot_price' => [$required, 'numeric', 'between:1,10000000'],
+            'price_per_play' => [$required, 'numeric', 'between:0.1,10000'],
             'audience_notes' => ['sometimes', 'nullable', 'string', 'max:2000'],
             'status' => ['sometimes', Rule::enum(ScreenStatus::class)],
             'content_rules' => ['sometimes', 'array'],

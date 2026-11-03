@@ -1,6 +1,9 @@
 <?php
 
+use App\Enums\WalletEntryType;
+use App\Models\Organisation;
 use App\Models\User;
+use App\Models\Wallet;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Testing\TestResponse;
 use PHPOpenSourceSaver\JWTAuth\Facades\JWTAuth;
@@ -49,4 +52,37 @@ function totp(string $secret, int $offsetSteps = 0): string
 function envelopeError(TestResponse $response): ?string
 {
     return $response->json('message');
+}
+
+/** The user has accepted the current terms and content policy. */
+function acceptTerms(User $user): User
+{
+    $user->termsAcceptances()->create([
+        'version' => config('terms.version'), 'text_sha256' => str_repeat('a', 64), 'accepted_at' => now(),
+    ]);
+
+    return $user;
+}
+
+/** The user has an approved identity document (file already deleted, as after a real review). */
+function verifyIdentity(User $user, string $status = 'approved'): User
+{
+    $user->identityDocuments()->create([
+        'type' => 'citizenship', 'number' => '12-34-56-7890', 'mime' => 'image/jpeg', 'sha256' => str_repeat('b', 64), 'status' => $status,
+    ]);
+
+    return $user;
+}
+
+/** Put $rupees into an organisation's wallet (as a top-up would). */
+function fundWallet(Organisation $org, int $rupees): Wallet
+{
+    $wallet = Wallet::firstOrCreate(['organisation_id' => $org->getKey()]);
+    $wallet->increment('balance_paisa', $rupees * 100);
+    $wallet->transactions()->create([
+        'type' => WalletEntryType::TopUp, 'amount_paisa' => $rupees * 100, 'balance_after_paisa' => $wallet->balance_paisa,
+        'reserved_after_paisa' => $wallet->reserved_paisa, 'description' => 'Test top-up', 'created_at' => now(),
+    ]);
+
+    return $wallet->refresh();
 }

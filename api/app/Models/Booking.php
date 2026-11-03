@@ -10,9 +10,13 @@ use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['campaign_id', 'screen_id', 'slot_index', 'status', 'price', 'hold_expires_at', 'date_range'])]
-#[Hidden(['id', 'campaign_id', 'screen_id', 'creative_id'])]
+#[Fillable([
+    'organisation_id', 'campaign_id', 'screen_id', 'creative_id', 'slot_index', 'status', 'price', 'hold_expires_at',
+    'date_range', 'start_hour', 'end_hour', 'price_per_play', 'plays_total', 'plays_done',
+])]
+#[Hidden(['id', 'organisation_id', 'campaign_id', 'screen_id', 'creative_id'])]
 class Booking extends Model
 {
     use HasPublicUuid;
@@ -25,6 +29,27 @@ class Booking extends Model
     public function screen(): BelongsTo
     {
         return $this->belongsTo(Screen::class);
+    }
+
+    public function organisation(): BelongsTo
+    {
+        return $this->belongsTo(Organisation::class);
+    }
+
+    public function creative(): BelongsTo
+    {
+        return $this->belongsTo(Creative::class);
+    }
+
+    public function playLogs(): HasMany
+    {
+        return $this->hasMany(PlayLog::class);
+    }
+
+    /** Plays the advertiser has paid for in each booked day. */
+    public function playsPerDay(): int
+    {
+        return intdiv($this->plays_total, max(1, $this->starts_on->diffInDays($this->ends_on) + 1));
     }
 
     /** Postgres daterange for the inclusive days [$start, $end]. */
@@ -50,7 +75,12 @@ class Booking extends Model
         return [
             'status' => BookingStatus::class,
             'price' => 'decimal:2',
+            'price_per_play' => 'decimal:2',
             'hold_expires_at' => 'immutable_datetime',
+            'start_hour' => 'integer',
+            'end_hour' => 'integer',
+            'plays_total' => 'integer',
+            'plays_done' => 'integer',
         ];
     }
 }

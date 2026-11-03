@@ -9,6 +9,8 @@ export const useOrgStore = defineStore('orgs', () => {
 
   const advertisers = computed(() => list.value.filter((o) => o.type === 'advertiser'))
   const owners = computed(() => list.value.filter((o) => o.type === 'owner'))
+  /** The organisation ads, bookings and the wallet belong to (every phone sign-up gets one). */
+  const advertiser = computed(() => advertisers.value[0] ?? null)
 
   async function load(force = false): Promise<void> {
     if (loaded.value && !force) return
@@ -22,10 +24,16 @@ export const useOrgStore = defineStore('orgs', () => {
     return org
   }
 
+  /** The advertiser organisation, creating one named after the user if they have none yet. */
+  async function ensureAdvertiser(name: string): Promise<Organisation> {
+    await load()
+    return advertiser.value ?? create({ name, type: 'advertiser' })
+  }
+
   function reset(): void {
     list.value = []
     loaded.value = false
   }
 
-  return { list, loaded, advertisers, owners, load, create, reset }
+  return { list, loaded, advertisers, owners, advertiser, load, create, ensureAdvertiser, reset }
 })

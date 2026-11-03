@@ -41,4 +41,8 @@ it('grants roles only through the make-admin command', function () {
 
     $this->artisan('dooh:make-admin', ['email' => 'BOSS@x.np'])->assertSuccessful();
     expect($user->fresh()->hasRole('admin'))->toBeTrue();
+
+    $phoneUser = User::factory()->create(['phone' => '+9779851234567']);
+    $this->artisan('dooh:make-admin', ['email' => '985-123-4567'])->assertSuccessful();
+    expect($phoneUser->fresh()->hasRole('admin'))->toBeTrue();
 });

@@ -4,61 +4,58 @@ namespace App\Repositories;
 
 use App\Enums\BookingStatus;
 use App\Models\Booking;
-use App\Models\Campaign;
+use App\Models\Creative;
+use App\Models\Organisation;
 use App\Models\Screen;
 use Carbon\CarbonImmutable;
-use Illuminate\Database\Eloquent\Collection;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Collection;
 
 class BookingRepository
 {
     /** @return Collection<int, Booking> */
-    public function forCampaign(Campaign $campaign): Collection
+    public function forOrganisation(Organisation $org): Collection
     {
-        return $campaign->bookings()->with('screen')->latest()->get();
+        return $org->bookings()->with(['screen', 'creative'])->latest('id')->get();
     }
 
-    public function findForCampaign(Campaign $campaign, string $uuid): ?Booking
+    public function findForOrganisation(Organisation $org, string $uuid): ?Booking
     {
-        return $campaign->bookings()->with('screen')->where('uuid', $uuid)->first();
+        return $org->bookings()->with(['screen', 'creative'])->where('uuid', $uuid)->first();
+    }
+
+    /** The booking row locked for the rest of the transaction (status and play counters change). */
+    public function lock(Booking $booking): Booking
+    {
+        return Booking::with(['screen', 'creative', 'organisation'])->whereKey($booking->getKey())->lockForUpdate()->firstOrFail();
     }
 
     /**
-     * Slot indexes on $screen already held for any day in [$start, $end].
+     * Slot indexes on $screen already taken on any day in [$start, $end] during any hour in
+     * [$startHour, $endHour).
      *
      * @return list<int>
      */
-    public function takenSlots(Screen $screen, CarbonImmutable $start, CarbonImmutable $end): array
+    public function takenSlots(Screen $screen, CarbonImmutable $start, CarbonImmutable $end, int $startHour, int $endHour): array
     {
         return $this->active($screen)
             ->whereRaw('date_range && ?::daterange', [Booking::dateRange($start, $end)])
+            ->whereRaw('hour_range && int4range(?, ?)', [$startHour, $endHour])
             ->distinct()
             ->pluck('slot_index')
             ->all();
     }
 
     /**
-     * Free slot count for each day in [$start, $end].
+     * Bookings on $screen that touch [$start, $end], for building the hour-by-hour availability grid.
      *
-     * @return array<string, int>
+     * @return Collection<int, Booking>
      */
-    public function freeSlotsPerDay(Screen $screen, CarbonImmutable $start, CarbonImmutable $end): array
+    public function overlapping(Screen $screen, CarbonImmutable $start, CarbonImmutable $end): Collection
     {
-        $rows = DB::select(<<<'SQL'
-            SELECT d::date AS day, COUNT(b.id) AS taken
-            FROM generate_series(?::date, ?::date, interval '1 day') AS d
-            LEFT JOIN bookings b
-                ON b.screen_id = ? AND b.date_range @> d::date AND b.status NOT IN ('rejected', 'cancelled')
-            GROUP BY d ORDER BY d
-        SQL, [$start->toDateString(), $end->toDateString(), $screen->getKey()]);
-
-        $slots = $screen->slotCount();
-        $out = [];
-        foreach ($rows as $row) {
-            $out[$row->day] = max(0, $slots - (int) $row->taken);
-        }
-
-        return $out;
+        return $this->active($screen)
+            ->whereRaw('date_range && ?::daterange', [Booking::dateRange($start, $end)])
+            ->get(['id', 'date_range', 'start_hour', 'end_hour', 'slot_index']);
     }
 
     public function create(array $attributes): Booking
@@ -66,14 +63,46 @@ class BookingRepository
         return Booking::create($attributes);
     }
 
-    public function setStatus(Booking $booking, BookingStatus $status): Booking
+    public function save(Booking $booking): Booking
     {
-        $booking->update(['status' => $status, 'hold_expires_at' => null]);
+        $booking->save();
 
         return $booking;
     }
 
-    /** Cancel draft holds whose time ran out. Returns how many were released. */
+    /** @return Collection<int, Booking> */
+    public function waitingOnCreative(Creative $creative): Collection
+    {
+        return $creative->bookings()->where('status', BookingStatus::Checking)->get();
+    }
+
+    /** @return Collection<int, Booking> */
+    public function openForCreative(Creative $creative): Collection
+    {
+        return $creative->bookings()->whereIn('status', [BookingStatus::Checking, BookingStatus::Scheduled, BookingStatus::Live])->get();
+    }
+
+    /**
+     * Bookings whose status may need to move on by $today: scheduled or live, or still waiting
+     * for review, and starting no later than $today.
+     *
+     * @return Collection<int, Booking>
+     */
+    public function dueForUpdate(CarbonImmutable $today): Collection
+    {
+        return Booking::query()
+            ->whereIn('status', [BookingStatus::Checking, BookingStatus::Scheduled, BookingStatus::Live])
+            ->whereRaw('lower(date_range) <= ?::date', [$today->toDateString()])
+            ->get();
+    }
+
+    /** @return Collection<int, Booking> */
+    public function live(): Collection
+    {
+        return Booking::query()->where('status', BookingStatus::Live)->get();
+    }
+
+    /** Cancel old-style draft holds whose time ran out. Returns how many were released. */
     public function releaseExpiredHolds(CarbonImmutable $now): int
     {
         return Booking::query()
@@ -82,7 +111,7 @@ class BookingRepository
             ->update(['status' => BookingStatus::Cancelled, 'hold_expires_at' => null, 'updated_at' => $now]);
     }
 
-    private function active(Screen $screen)
+    private function active(Screen $screen): Builder
     {
         return Booking::query()
             ->where('screen_id', $screen->getKey())

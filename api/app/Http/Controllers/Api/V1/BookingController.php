@@ -10,27 +10,35 @@ use App\Services\BookingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
-/** /orgs/{org}/campaigns/{campaign}/bookings */
+/** /orgs/{org}/bookings */
 class BookingController extends Controller
 {
     public function __construct(private BookingService $bookings) {}
 
-    public function index(Request $request, string $org, string $campaign): JsonResponse
+    public function index(Request $request, string $org): JsonResponse
     {
-        return ApiResponse::success(BookingResource::collection($this->bookings->list($request->user(), $org, $campaign)));
+        return ApiResponse::success(BookingResource::collection($this->bookings->list($request->user(), $org)));
     }
 
-    public function store(StoreBookingRequest $request, string $org, string $campaign): JsonResponse
+    public function show(Request $request, string $org, string $booking): JsonResponse
     {
-        $booking = $this->bookings->hold($request->user(), $org, $campaign, $request->validated());
-
-        return ApiResponse::success(new BookingResource($booking->refresh()->load('screen')), 'Slot held. Upload your ad to continue.', 201);
+        return ApiResponse::success(new BookingResource($this->bookings->find($request->user(), $org, $booking)));
     }
 
-    public function cancel(Request $request, string $org, string $campaign, string $booking): JsonResponse
+    public function store(StoreBookingRequest $request, string $org): JsonResponse
     {
-        $cancelled = $this->bookings->cancel($request->user(), $org, $campaign, $booking);
+        $booking = $this->bookings->book($request->user(), $org, $request->validated());
+        $message = $booking->status->value === 'scheduled'
+            ? 'Booked. Your ad is approved and will play at the booked times.'
+            : 'Booked. Your ad plays once the review team approves it.';
 
-        return ApiResponse::success(new BookingResource($cancelled->load('screen')), 'Booking cancelled.');
+        return ApiResponse::success(new BookingResource($booking->refresh()->load(['screen', 'creative'])), $message, 201);
+    }
+
+    public function cancel(Request $request, string $org, string $booking): JsonResponse
+    {
+        $cancelled = $this->bookings->cancel($request->user(), $org, $booking);
+
+        return ApiResponse::success(new BookingResource($cancelled->load(['screen', 'creative'])), 'Booking cancelled. Unused money is back in your wallet.');
     }
 }

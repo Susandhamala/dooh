@@ -1,33 +1,268 @@
 @import 'tailwindcss';
 @import 'leaflet/dist/leaflet.css';
 
-/* Design tokens — replace with rentallnepal's so the portal reads as one product. */
+/*
+ * Design tokens copied from rentallnepal.com (frontend/src/style.css) so Screen Ads reads as the same
+ * product. Use token names, never raw hex.
+ */
 @theme {
-  --color-brand: #0f766e;
-  --color-brand-dark: #115e59;
-  --font-sans: 'Inter', system-ui, sans-serif;
+  /* Brand — plum */
+  --color-plum-950: #241436;
+  --color-plum-900: #40206f;
+  --color-plum-800: #4e2a80;
+  --color-plum-700: #6c39a9;
+  --color-plum-300: #c9bedd;
+  --color-plum-200: #eae3f5;
+  --color-plum-100: #eee5f8;
+  --color-plum-50: #f7f5fc;
+
+  /* Accent — coral */
+  --color-coral: #f45d48;
+  --color-coral-dark: #df4a36;
+  --color-coral-700: #cf3f2d;
+  --color-coral-800: #b23524;
+
+  /* Screens and devices — navy + teal */
+  --color-navy: #0c3c66;
+  --color-teal: #1c8c8c;
+  --color-teal-dark: #12706f;
+  --color-teal-50: #e7f4f3;
+
+  /* Warm accents */
+  --color-sand: #f2c38f;
+  --color-notice: #fff6ee;
+  --color-notice-line: #f1d0b0;
+  --color-notice-ink: #8a4b22;
+
+  /* Neutrals — warm, tuned to plum */
+  --color-ink: #221631;
+  --color-ink-soft: #3a3348;
+  --color-body: #3f3852;
+  --color-muted: #665d70;
+  --color-subtle: #6e6683;
+  --color-faint: #8a8397;
+  --color-line: #e5e0ea;
+  --color-line-strong: #d9d3e6;
+  --color-divider: #f0edf5;
+  --color-skeleton: #efecf5;
+  --color-canvas: #f7f7fa;
+  --color-tint: #ede7f5;
+
+  /* Payment partners' own brand colours (wallet only) */
+  --color-esewa: #60bb46;
+  --color-khalti: #5c2d91;
+
+  /* Status */
+  --color-success: #16794b;
+  --color-warning: #9a5b00;
+  --color-danger: #b42336;
+  --color-danger-dark: #94162a;
+
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+
+  --shadow-card: 0 6px 24px rgba(38, 22, 49, 0.08);
+  --shadow-lift: 0 6px 24px rgba(38, 22, 49, 0.12);
+  --shadow-modal: 0 20px 60px rgba(38, 22, 49, 0.18);
 }
 
-@layer components {
-  .card {
-    @apply rounded-lg border border-slate-200 bg-white p-5;
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* Keep focused/anchored targets clear of the sticky header. */
+:target,
+[id] {
+  scroll-margin-top: 88px;
+}
+
+body {
+  @apply bg-canvas text-ink antialiased;
+  text-wrap: pretty;
+}
+
+::selection {
+  background: rgb(108 57 169 / 20%);
+}
+
+::placeholder {
+  @apply text-faint;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-plum-700);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Never allow sideways scrolling. `clip` (unlike `hidden`) keeps sticky headers working on iOS. */
+html,
+body {
+  overflow-x: hidden;
+  max-width: 100%;
+}
+@supports (overflow: clip) {
+  html,
+  body {
+    overflow-x: clip;
   }
-  .label {
-    @apply mb-1 block text-sm font-medium text-slate-700;
+}
+
+/* Long words, URLs and emails wrap instead of pushing the layout sideways. */
+h1,
+h2,
+h3,
+p,
+li,
+dd,
+td,
+th {
+  overflow-wrap: break-word;
+}
+
+/* Stop iOS zooming when a field is focused (font-size must be >= 16px). */
+@media (max-width: 640px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
   }
-  .input {
-    @apply w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand focus:ring-1 focus:ring-brand focus:outline-none;
+}
+
+@media (hover: none) and (pointer: coarse) {
+  button,
+  a,
+  [role='button'],
+  input[type='checkbox'],
+  input[type='radio'] {
+    touch-action: manipulation;
   }
-  .btn {
-    @apply inline-flex items-center justify-center rounded-md bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-dark disabled:opacity-50;
+}
+
+/* Component classes are @utility so they can @apply each other (Tailwind v4). */
+
+@utility shell {
+  @apply mx-auto w-full max-w-[1200px] px-4 sm:px-6;
+}
+
+/* ---- Buttons ---- */
+@utility btn {
+  @apply inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-[15px] font-bold transition disabled:cursor-not-allowed disabled:opacity-60;
+}
+@utility btn-primary {
+  @apply btn bg-coral-700 text-white hover:bg-coral-800;
+}
+@utility btn-plum {
+  @apply btn bg-plum-700 text-white hover:bg-plum-800;
+}
+@utility btn-outline {
+  @apply btn border border-line-strong bg-white text-plum-900 hover:border-plum-700 hover:bg-plum-50;
+}
+@utility btn-quiet {
+  @apply btn bg-plum-100 text-plum-900 hover:bg-plum-200;
+}
+@utility btn-ghost {
+  @apply btn bg-transparent font-semibold text-ink-soft hover:bg-plum-100 hover:text-plum-900;
+}
+@utility btn-danger {
+  @apply btn bg-danger text-white hover:bg-danger-dark;
+}
+@utility btn-sm {
+  @apply min-h-0 rounded-lg px-3.5 py-2 text-sm;
+  /* Fingers need a bigger target than a mouse pointer. */
+  @media (pointer: coarse) {
+    min-height: 40px;
   }
-  .btn-secondary {
-    @apply inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50;
+}
+
+/* ---- Surfaces ---- */
+@utility card {
+  @apply rounded-2xl border border-line bg-white;
+}
+@utility card-interactive {
+  @apply card transition hover:border-line-strong hover:shadow-card;
+}
+/* The soft plum wash behind page tops (same as rentallnepal's Services page). */
+@utility page-wash {
+  background:
+    radial-gradient(900px 460px at 10% -140px, rgb(108 57 169 / 0.22), transparent 70%),
+    radial-gradient(760px 420px at 96% 20px, rgb(64 32 111 / 0.12), transparent 70%),
+    linear-gradient(180deg, var(--color-plum-100), var(--color-canvas) 520px);
+}
+
+/* ---- Badges ---- */
+@utility badge {
+  @apply inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[13px] font-bold whitespace-nowrap;
+}
+
+/* ---- Forms ---- */
+@utility field-label {
+  @apply mb-1.5 block text-sm font-bold text-ink-soft;
+}
+@utility input {
+  @apply w-full rounded-xl border border-line-strong bg-white px-3.5 py-2.5 text-[15px] text-ink outline-none transition focus:border-plum-700 focus:ring-2 focus:ring-plum-700/15 disabled:bg-canvas;
+}
+@utility input-error {
+  @apply border-danger focus:border-danger focus:ring-danger/15;
+}
+@utility field-hint {
+  @apply mt-1.5 block text-sm text-subtle;
+}
+@utility field-error {
+  @apply mt-1.5 block text-sm font-semibold text-danger;
+}
+
+/* ---- Typography ---- */
+@utility eyebrow {
+  @apply text-[13px] font-bold tracking-[0.08em] text-coral-700 uppercase;
+}
+@utility h-page {
+  @apply text-[28px] leading-tight font-extrabold tracking-[-0.02em] text-ink sm:text-3xl;
+}
+@utility h-section {
+  @apply text-lg font-extrabold tracking-[-0.01em] text-ink;
+}
+@utility lede {
+  @apply max-w-[680px] text-base text-muted;
+}
+@utility price {
+  @apply font-extrabold whitespace-nowrap text-plum-900 [font-variant-numeric:tabular-nums];
+}
+@utility link {
+  @apply font-semibold text-plum-700 transition hover:text-plum-900;
+}
+
+/* ---- Loading placeholder ---- */
+@utility skeleton {
+  @apply rounded-lg bg-skeleton;
+  animation: shimmer 1.6s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0%,
+  100% {
+    opacity: 0.55;
   }
-  .field-error {
-    @apply mt-1 text-xs text-red-600;
+  50% {
+    opacity: 1;
   }
-  .badge {
-    @apply inline-block rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700;
+}
+
+/* Leaflet sits under the sticky header and dialogs. */
+.leaflet-container {
+  z-index: 0;
+  font-family: var(--font-sans);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
