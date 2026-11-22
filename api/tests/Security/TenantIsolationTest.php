@@ -28,7 +28,7 @@ beforeEach(function () {
     $this->victimCreative = Creative::factory()->create(['organisation_id' => $this->victimAdvertiser]);
     $this->victimBooking = Booking::create([
         'organisation_id' => $this->victimAdvertiser->id, 'screen_id' => $this->victimScreen->id, 'creative_id' => $this->victimCreative->id,
-        'slot_index' => 0, 'status' => 'scheduled', 'price' => 500, 'price_per_play' => 2, 'plays_total' => 250, 'start_hour' => 8, 'end_hour' => 10,
+        'status' => 'scheduled', 'price' => 500, 'price_per_play' => 2, 'plays_total' => 250, 'start_minute' => 480, 'end_minute' => 600,
         'date_range' => Booking::dateRange(now()->addDay()->toImmutable(), now()->addDays(2)->toImmutable()),
     ]);
     fundWallet($this->victimAdvertiser, 1000);
@@ -60,6 +60,9 @@ dataset('foreign endpoints', [
     'show owner screen' => ['GET', '/orgs/{own}/screens/{screen}'],
     'create screen' => ['POST', '/orgs/{own}/screens'],
     'update screen' => ['PATCH', '/orgs/{own}/screens/{screen}'],
+    'owner dashboard' => ['GET', '/orgs/{own}/owner/overview'],
+    'screen schedule' => ['GET', '/orgs/{own}/screens/{screen}/schedule'],
+    'move booking' => ['POST', '/orgs/{own}/screens/{screen}/bookings/{booking}/move'],
 ]);
 
 function foreignUrl(string $path): string
@@ -81,7 +84,8 @@ function validBody(string $method, string $path): array
         str_ends_with($path, '/campaigns') => ['name' => 'X', 'start_date' => now()->addDay()->toDateString(), 'end_date' => now()->addDays(3)->toDateString()],
         // The attacker's own ad on the victim's org: still must not be able to book there.
         str_ends_with($path, '/bookings') => ['screen_id' => test()->victimScreen->uuid, 'creative_id' => test()->attackerCreative->uuid,
-            'start_date' => now()->addDays(3)->toDateString(), 'end_date' => now()->addDays(4)->toDateString(), 'start_hour' => 12, 'end_hour' => 13],
+            'start_date' => now()->addDays(3)->toDateString(), 'end_date' => now()->addDays(4)->toDateString(), 'start_time' => '12:00', 'end_time' => '13:00'],
+        str_ends_with($path, '/move') => ['direction' => 'up', 'date' => now('Asia/Kathmandu')->addDay()->toDateString(), 'hour' => 8],
         str_ends_with($path, '/topup') => ['amount' => 500, 'gateway' => 'esewa'],
         str_ends_with($path, '/creatives') && $method === 'POST' => ['name' => 'Hijack ad', 'category' => 'retail', 'resolution' => '1920x1080',
             'declaration' => true, 'file' => UploadedFile::fake()->image('ad.png', 1920, 1080)],
@@ -95,7 +99,7 @@ function victimState(): array
 {
     return [
         Campaign::count(), Booking::count(), Screen::count(), Creative::count(), WalletTransaction::count(),
-        test()->victimScreen->fresh()->name, test()->victimBooking->fresh()->status,
+        test()->victimScreen->fresh()->name, test()->victimBooking->fresh()->status, test()->victimBooking->fresh()->loop_order,
         Wallet::where('organisation_id', test()->victimAdvertiser->id)->first()->only(['balance_paisa', 'reserved_paisa']),
     ];
 }
@@ -114,7 +118,7 @@ it('returns 404 for another organisation\'s resources', function (string $method
 it('will not book another organisation\'s ad, even onto the attacker\'s own organisation', function () {
     actingAsApi($this->attacker)->postJson("/api/v1/orgs/{$this->attackerOrg->uuid}/bookings", [
         'screen_id' => $this->victimScreen->uuid, 'creative_id' => $this->victimCreative->uuid,
-        'start_date' => now()->addDays(3)->toDateString(), 'end_date' => now()->addDays(3)->toDateString(), 'start_hour' => 12, 'end_hour' => 13,
+        'start_date' => now()->addDays(3)->toDateString(), 'end_date' => now()->addDays(3)->toDateString(), 'start_time' => '12:00', 'end_time' => '13:00',
     ])->assertNotFound();
 });
 

@@ -8,3 +8,4 @@ infra/ca/out/
 player/.venv/
 *.egg-info/
 .pytest_cache/
+backups/

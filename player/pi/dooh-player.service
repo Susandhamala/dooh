@@ -1,0 +1,33 @@
+# Rentall Screen Ads player on a Raspberry Pi. Installed by player/pi/install.sh.
+[Unit]
+Description=Rentall Screen Ads player
+Wants=network-online.target
+After=network-online.target time-sync.target
+
+[Service]
+User=dooh
+Group=dooh
+SupplementaryGroups=video render
+ExecStart=/opt/dooh/venv/bin/dooh-player run --config-dir /etc/dooh --data-dir /var/lib/dooh
+Environment=PYTHONUNBUFFERED=1
+# Comes back after a crash or if mpv can't start (e.g. HDMI not ready yet at boot).
+Restart=always
+RestartSec=5
+# /run/dooh holds mpv's control socket.
+RuntimeDirectory=dooh
+StateDirectory=dooh
+
+# The player only needs its config (read), its cache (write) and the display.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/dooh
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

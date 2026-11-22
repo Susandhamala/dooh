@@ -43,6 +43,25 @@ it('blocks loading money, uploading and documents until the terms are accepted',
     actingAsApi($user)->postJson("/api/v1/orgs/{$org->uuid}/creatives", [])->assertForbidden();
 });
 
+it('needs an identity document before loading money or uploading ads', function () {
+    $user = acceptTerms(User::factory()->create());
+    $org = Organisation::factory()->withMember($user)->create();
+
+    actingAsApi($user)->postJson("/api/v1/orgs/{$org->uuid}/wallet/topup", ['amount' => 500, 'gateway' => 'esewa'])
+        ->assertForbidden()->assertJsonPath('errors.document.0', 'required');
+    actingAsApi($user)->postJson("/api/v1/orgs/{$org->uuid}/creatives", [])
+        ->assertForbidden()->assertJsonPath('errors.document.0', 'required');
+
+    // A document waiting for review is enough to load money; a refused one is not.
+    verifyIdentity($user, 'pending');
+    actingAsApi($user)->postJson("/api/v1/orgs/{$org->uuid}/wallet/topup", ['amount' => 500, 'gateway' => 'esewa'])->assertCreated();
+
+    $refused = verifyIdentity(acceptTerms(User::factory()->create()), 'rejected');
+    $org2 = Organisation::factory()->withMember($refused)->create();
+    actingAsApi($refused)->postJson("/api/v1/orgs/{$org2->uuid}/wallet/topup", ['amount' => 500, 'gateway' => 'esewa'])
+        ->assertForbidden()->assertJsonPath('message', 'Your identity document was refused. Upload a clear one to continue.');
+});
+
 it('stores identity documents encrypted and shows only the last digits', function () {
     Storage::fake('local');
     $user = acceptTerms(User::factory()->create());

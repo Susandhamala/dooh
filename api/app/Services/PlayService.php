@@ -6,26 +6,28 @@ use App\Enums\BookingStatus;
 use App\Models\Booking;
 use App\Repositories\BookingRepository;
 use App\Repositories\PlayLogRepository;
-use App\Support\Money;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Proof of play and per-play charging. Each logged play spends price_per_play from the booking's
- * hold. A play is logged once (unique per booking and time), so it can't be charged twice, and never
- * beyond the plays that were paid for.
+ * Proof of play. Bookings are paid up front; each logged play counts towards what was paid for, and
+ * plays that never happen are refunded when the booking ends. A play is logged once (unique per
+ * booking and time) and never beyond the plays that were paid for.
  */
 class PlayService
 {
+    /** @var array<string, list<int>> a booking's play times on one day, for the binary search below */
+    private array $times = [];
+
     public function __construct(
         private BookingRepository $bookings,
         private PlayLogRepository $plays,
-        private WalletService $wallets,
+        private LoopService $loops,
     ) {}
 
     /**
      * @param  list<CarbonImmutable>  $times
-     * @return int plays newly recorded and charged
+     * @return int plays newly recorded
      */
     public function record(Booking $booking, array $times, string $source): int
     {
@@ -46,39 +48,33 @@ class PlayService
             }
             $b->plays_done += $new;
             $this->bookings->save($b);
-            $this->wallets->charge(
-                $b->organisation,
-                $new * Money::toPaisa($b->price_per_play),
-                $new === 1 ? "1 play on {$b->screen->name}" : "{$new} plays on {$b->screen->name}",
-                $b->uuid,
-            );
 
             return $new;
         });
     }
 
     /**
-     * When play number $i (0-based) of a booking is due: the booking's slot in the loop, every loop,
-     * through the booked hours of each booked day (Nepal time).
+     * When play number $i (0-based) of a booking is due: its packed place(s) in every loop that
+     * starts inside the booked window, on each booked day (Nepal time).
      */
     public function playTime(Booking $b, int $i): CarbonImmutable
     {
         $days = (int) $b->starts_on->diffInDays($b->ends_on) + 1;
-        $perDay = intdiv($b->plays_total, $days);
-        $perHour = max(1, intdiv($perDay, max(1, $b->end_hour - $b->start_hour)));
-        $loop = intdiv(3600, $perHour);
-        $rem = $i % $perDay;
+        $perDay = max(1, intdiv($b->plays_total, $days));
+        $day = $b->starts_on->addDays(intdiv($i, $perDay));
+        $times = $this->times[$b->getKey().'|'.$day->toDateString()] ??= $this->loops->playTimes($b, $day);
+        // No place this hour (shouldn't happen): fall back to the start of its loop.
+        $at = $times[$i % $perDay] ?? ($b->loopStarts()[intdiv($i % $perDay, max(1, $b->repeats))] ?? 0);
 
-        return CarbonImmutable::parse($b->starts_on->addDays(intdiv($i, $perDay))->toDateString(), config('dooh.timezone'))
-            ->addHours($b->start_hour + intdiv($rem, $perHour))
-            ->addSeconds(($rem % $perHour) * $loop + $b->slot_index * $b->screen->spot_seconds)
-            ->utc();
+        return CarbonImmutable::parse($day->toDateString(), config('dooh.timezone'))->addSeconds($at)->utc();
     }
 
-    /** Lab stand-in for real players: log and charge every play that should have happened by $now. */
+    /** Lab stand-in for real players: log every play that should have happened by $now. */
     public function simulateDue(CarbonImmutable $now): int
     {
         $total = 0;
+        $this->times = [];
+        $this->loops->forget();
         foreach ($this->bookings->live() as $booking) {
             $booking->load('screen');
             $due = $this->dueCount($booking, $now);

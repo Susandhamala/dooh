@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Auth\AdminLoginRequest;
 use App\Http\Requests\Auth\LoginRequest;
 use App\Http\Requests\Auth\MfaCodeRequest;
 use App\Http\Requests\Auth\PhoneCodeRequest;
@@ -29,6 +30,11 @@ class AuthController extends Controller
     public function login(LoginRequest $request): JsonResponse
     {
         return $this->session($this->auth->login($request->input('email'), $request->input('password')), 'Signed in.');
+    }
+
+    public function adminLogin(AdminLoginRequest $request): JsonResponse
+    {
+        return $this->session($this->auth->adminLogin($request->input('username'), $request->input('password')), 'Signed in.');
     }
 
     public function phoneCode(PhoneCodeRequest $request): JsonResponse

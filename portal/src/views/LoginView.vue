@@ -11,11 +11,14 @@ const auth = useAuthStore()
 const router = useRouter()
 const route = useRoute()
 
-type Step = 'phone' | 'code' | 'name'
+type Step = 'phone' | 'code' | 'name' | 'email'
 const step = ref<Step>('phone')
-const phone = ref('')
+// The home page's sign-up box passes the number along.
+const phone = ref(typeof route.query.phone === 'string' ? route.query.phone : '')
 const code = ref('')
 const name = ref('')
+const email = ref('')
+const password = ref('')
 const devCode = ref<string | null>(null)
 const error = ref<string | null>(null)
 const busy = ref(false)
@@ -103,6 +106,27 @@ async function verify() {
   }
 }
 
+/** Email and password: screen owner and staff accounts made for the lab (e.g. RentALL Nepal). */
+async function emailLogin() {
+  busy.value = true
+  error.value = null
+  try {
+    const res = await post<Session>('/auth/login', { email: email.value.trim(), password: password.value })
+    auth.signIn(res.data)
+    if (res.data.mfa_required) router.push({ name: 'security', query: { next: next() } })
+    else router.push(res.data.user.terms_accepted ? next() : { name: 'welcome', query: { next: next() } })
+  } catch (err) {
+    error.value = errorMessage(err)
+  } finally {
+    busy.value = false
+  }
+}
+
+function useEmail(on: boolean) {
+  step.value = on ? 'email' : 'phone'
+  error.value = null
+}
+
 function changeNumber() {
   step.value = 'phone'
   error.value = null
@@ -146,6 +170,33 @@ function changeNumber() {
             <p v-else class="field-hint">NTC, Ncell and Smart numbers.</p>
 
             <button class="btn-primary mt-6 w-full" :disabled="busy">{{ busy ? 'Sending…' : 'Send code' }}</button>
+            <button type="button" class="link mt-4 block w-full text-center text-sm" @click="useEmail(true)">
+              Sign in with email and password
+            </button>
+          </form>
+
+          <!-- Email and password (screen owner and staff accounts) -->
+          <form v-else-if="step === 'email'" class="mt-5" novalidate @submit.prevent="emailLogin">
+            <h1 class="h-page">Sign in with email</h1>
+            <p class="mt-1.5 text-[15px] text-muted">For screen owner and staff accounts.</p>
+            <label class="field-label mt-6" for="email">Email</label>
+            <input id="email" v-model="email" class="input" :class="{ 'input-error': error }" type="email" autocomplete="username" autofocus />
+            <label class="field-label mt-4" for="password">Password</label>
+            <input
+              id="password"
+              v-model="password"
+              class="input"
+              :class="{ 'input-error': error }"
+              type="password"
+              autocomplete="current-password"
+            />
+            <p v-if="error" class="field-error">{{ error }}</p>
+            <button class="btn-primary mt-6 w-full" :disabled="busy || !email.trim() || !password">
+              {{ busy ? 'Signing in…' : 'Sign in' }}
+            </button>
+            <button type="button" class="link mt-4 inline-flex items-center gap-1 text-sm" @click="useEmail(false)">
+              <AppIcon name="back" :size="15" /> Use my mobile number
+            </button>
           </form>
 
           <!-- 2. Code (and 3. name for a new number) -->

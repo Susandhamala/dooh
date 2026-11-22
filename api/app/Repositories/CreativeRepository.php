@@ -63,4 +63,10 @@ class CreativeRepository
             ->orderBy($status === CreativeStatus::InReview ? 'created_at' : 'updated_at', $status === CreativeStatus::InReview ? 'asc' : 'desc')
             ->paginate($perPage);
     }
+
+    /** @return array<string, int> status => count */
+    public function countByStatus(): array
+    {
+        return Creative::query()->selectRaw('status, count(*) as n')->groupBy('status')->pluck('n', 'status')->map(fn ($n) => (int) $n)->all();
+    }
 }

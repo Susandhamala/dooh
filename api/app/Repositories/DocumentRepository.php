@@ -44,6 +44,12 @@ class DocumentRepository
             ->paginate($perPage);
     }
 
+    /** @return array<string, int> status => count */
+    public function countByStatus(): array
+    {
+        return IdentityDocument::query()->selectRaw('status, count(*) as n')->groupBy('status')->pluck('n', 'status')->map(fn ($n) => (int) $n)->all();
+    }
+
     public function save(IdentityDocument $document): IdentityDocument
     {
         $document->save();

@@ -24,10 +24,12 @@ const done = ref<string | null>(null)
 
 const w = computed(() => wallets.wallet)
 
-const TYPE_STYLE: Record<WalletTransaction['type'], { label: string; cls: string; icon: 'plus' | 'lock' | 'play' | 'arrow' }> = {
+const TYPE_STYLE: Record<WalletTransaction['type'], { label: string; cls: string; icon: 'plus' | 'lock' | 'calendar' | 'arrow' }> = {
   topup: { label: 'Loaded', cls: 'bg-success/10 text-success', icon: 'plus' },
+  charge: { label: 'Paid', cls: 'bg-plum-100 text-plum-700', icon: 'calendar' },
+  refund: { label: 'Refund', cls: 'bg-teal-50 text-teal-dark', icon: 'arrow' },
+  // Older history, from before bookings were paid up front.
   hold: { label: 'Held', cls: 'bg-warning/10 text-warning', icon: 'lock' },
-  charge: { label: 'Played', cls: 'bg-plum-100 text-plum-700', icon: 'play' },
   release: { label: 'Returned', cls: 'bg-teal-50 text-teal-dark', icon: 'arrow' },
 }
 
@@ -73,7 +75,7 @@ onMounted(load)
 
 <template>
   <div class="shell py-8 sm:py-10">
-    <PageHeader eyebrow="Payments" title="Wallet" lede="Load money first. Booking holds the cost; each play is charged as it happens; anything not played comes back." />
+    <PageHeader eyebrow="Payments" title="Wallet" lede="Load money, then pay for bookings from it. Plays that don’t happen are refunded here." />
 
     <AlertBox v-if="error" class="mb-6">{{ error }}</AlertBox>
 
@@ -81,19 +83,10 @@ onMounted(load)
       <div class="min-w-0 space-y-6">
         <!-- Balance -->
         <section class="overflow-hidden rounded-[22px] bg-gradient-to-br from-plum-800 to-plum-950 p-6 text-white shadow-modal sm:p-8">
-          <p class="text-sm font-semibold text-white/70">Available to spend</p>
+          <p class="text-sm font-semibold text-white/70">Your balance</p>
           <p v-if="w" class="mt-1 text-4xl font-extrabold tracking-tight [font-variant-numeric:tabular-nums]">{{ formatRupees(w.available) }}</p>
           <div v-else class="mt-2 h-10 w-40 animate-pulse rounded-lg bg-white/15" />
-          <dl class="mt-6 grid grid-cols-2 gap-4 border-t border-white/15 pt-5 text-sm">
-            <div>
-              <dt class="text-white/60">Held for booked plays</dt>
-              <dd class="mt-0.5 text-lg font-bold">{{ w ? formatRupees(w.reserved) : '–' }}</dd>
-            </div>
-            <div>
-              <dt class="text-white/60">Total balance</dt>
-              <dd class="mt-0.5 text-lg font-bold">{{ w ? formatRupees(w.balance) : '–' }}</dd>
-            </div>
-          </dl>
+          <p class="mt-4 text-sm text-white/70">Ready to pay for bookings. First to pay gets the slot.</p>
         </section>
 
         <!-- History -->
@@ -114,7 +107,7 @@ onMounted(load)
                 <span class="price block" :class="Number(t.amount) >= 0 ? 'text-success' : 'text-ink'">
                   {{ Number(t.amount) >= 0 ? '+' : '−' }}{{ formatRupees(Math.abs(Number(t.amount))) }}
                 </span>
-                <span class="block text-xs text-subtle">left {{ formatRupees(t.available_after) }}</span>
+                <span class="block text-xs text-subtle">balance {{ formatRupees(t.available_after) }}</span>
               </span>
             </li>
           </ul>

@@ -1,6 +1,8 @@
 <?php
 
 use App\Exceptions\DomainError;
+use App\Http\Middleware\AuthenticateDevice;
+use App\Http\Middleware\EnsureIdentitySubmitted;
 use App\Http\Middleware\EnsureTermsAccepted;
 use App\Http\Middleware\EnsureUserIsActive;
 use App\Http\Middleware\RequireMfa;
@@ -12,6 +14,7 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Validation\ValidationException;
 use Spatie\Permission\Middleware\RoleMiddleware;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
@@ -23,17 +26,20 @@ return Application::configure(basePath: dirname(__DIR__))
         api: __DIR__.'/../routes/api.php',
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
+        then: fn () => Route::middleware('api')->prefix('device')->group(base_path('routes/device.php')),
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
             'active' => EnsureUserIsActive::class,
+            'device' => AuthenticateDevice::class,
+            'identity' => EnsureIdentitySubmitted::class,
             'mfa' => RequireMfa::class,
             'role' => RoleMiddleware::class,
             'terms' => EnsureTermsAccepted::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        $isApi = fn (Request $request) => $request->is('api/*') || $request->expectsJson();
+        $isApi = fn (Request $request) => $request->is('api/*', 'device/*') || $request->expectsJson();
 
         $exceptions->shouldRenderJsonWhen($isApi);
         $exceptions->dontReport(DomainError::class);

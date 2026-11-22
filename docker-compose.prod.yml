@@ -1,0 +1,18 @@
+# Production overrides. Use with:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# (or: make prod). Needs api/.env made from api/.env.production.example. See docs/DEPLOY.md.
+
+services:
+  api:
+    environment:
+      # Only the api container migrates, once per start, before PHP-FPM takes requests.
+      RUN_MIGRATIONS: "true"
+      # Each worker can use up to 512 MB, so 12 suits a server with about 4 GB of RAM to spare.
+      PHP_FPM_MAX_CHILDREN: "12"
+
+  web:
+    ports: !override
+      # People reach the portal only through the host Nginx (public TLS certificate, HSTS).
+      - "127.0.0.1:8080:8080"
+      # Screens connect here directly: mutual TLS with the device CA, so no proxy in between.
+      - "8443:8443"

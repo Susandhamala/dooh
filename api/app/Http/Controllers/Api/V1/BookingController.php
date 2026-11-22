@@ -28,17 +28,18 @@ class BookingController extends Controller
     public function store(StoreBookingRequest $request, string $org): JsonResponse
     {
         $booking = $this->bookings->book($request->user(), $org, $request->validated());
-        $message = $booking->status->value === 'scheduled'
-            ? 'Booked. Your ad is approved and will play at the booked times.'
-            : 'Booked. Your ad plays once the review team approves it.';
 
-        return ApiResponse::success(new BookingResource($booking->refresh()->load(['screen', 'creative'])), $message, 201);
+        return ApiResponse::success(
+            new BookingResource($booking->refresh()->load(['screen', 'creative'])),
+            'Paid and booked. The slot is yours and your ad plays at the booked times.',
+            201,
+        );
     }
 
     public function cancel(Request $request, string $org, string $booking): JsonResponse
     {
         $cancelled = $this->bookings->cancel($request->user(), $org, $booking);
 
-        return ApiResponse::success(new BookingResource($cancelled->load(['screen', 'creative'])), 'Booking cancelled. Unused money is back in your wallet.');
+        return ApiResponse::success(new BookingResource($cancelled->load(['screen', 'creative'])), 'Booking cancelled. Unplayed plays are refunded to your wallet.');
     }
 }

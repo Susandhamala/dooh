@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import AlertBox from '@/components/ui/AlertBox.vue'
 import AppIcon from '@/components/ui/AppIcon.vue'
 import FileDrop from '@/components/ui/FileDrop.vue'
@@ -11,6 +12,8 @@ import { DOCUMENT_TYPES, type DocumentStatus, type IdentityDocument } from '@/li
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
+const route = useRoute()
+const router = useRouter()
 const docs = ref<IdentityDocument[]>([])
 const status = ref<DocumentStatus>('none')
 const loading = ref(true)
@@ -24,6 +27,11 @@ const busy = ref(false)
 const progress = ref(0)
 
 const canUpload = computed(() => status.value === 'none' || status.value === 'rejected')
+/** Where to go after uploading, when the router sent the user here first. */
+const nextPath = computed(() => {
+  const n = route.query.next
+  return typeof n === 'string' && n.startsWith('/') && !n.startsWith('//') ? n : null
+})
 const latest = computed(() => docs.value[0] ?? null)
 
 async function load() {
@@ -57,6 +65,7 @@ async function submit() {
     file.value = null
     form.value.number = ''
     await Promise.all([load(), auth.reloadMe()])
+    if (nextPath.value) router.push(nextPath.value)
   } catch (err) {
     errors.value = fieldErrors(err)
     error.value = errorMessage(err)
@@ -76,6 +85,10 @@ onMounted(load)
         title="Identity verification"
         lede="Every advertiser on public screens is a real, known person or business. We check your document once."
       />
+
+      <AlertBox v-if="nextPath && canUpload && !loading" tone="warning" class="mb-6" title="Upload your document first">
+        Everyone uploads an identity document before loading money, uploading ads or booking.
+      </AlertBox>
 
       <div v-if="loading" class="skeleton h-40" />
       <AlertBox v-else-if="loadError">{{ loadError }}</AlertBox>
@@ -104,7 +117,7 @@ onMounted(load)
               {{ latest.type_label }} · {{ latest.number }} · sent {{ formatDateTime(latest.submitted_at) }}
             </p>
             <p v-if="status === 'pending'" class="mt-2 text-sm text-body">
-              This usually takes less than a day. You can load money, upload and book meanwhile; ads go live once you are verified.
+              This usually takes less than a day. Meanwhile you can load money and upload ads. Booking opens once you are verified.
             </p>
             <p v-if="status === 'approved'" class="mt-2 text-sm text-body">For your privacy, we deleted the copy of your document after checking it.</p>
             <p v-if="latest.review_note" class="mt-2 rounded-lg bg-canvas px-3 py-2 text-sm"><strong>Reviewer:</strong> {{ latest.review_note }}</p>

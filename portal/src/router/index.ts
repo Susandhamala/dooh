@@ -9,13 +9,15 @@ declare module 'vue-router' {
     guestOnly?: boolean
     /** Needs the terms and content policy accepted first. */
     terms?: boolean
+    /** Needs an identity document uploaded (being checked or verified). */
+    identity?: boolean
     title?: string
   }
 }
 
 export const router = createRouter({
   history: createWebHistory(),
-  scrollBehavior: (to, _from, saved) => saved ?? (to.hash ? { el: to.hash } : { top: 0 }),
+  scrollBehavior: (to, _from, saved) => saved ?? (to.hash ? { el: to.hash, behavior: 'smooth' } : { top: 0 }),
   routes: [
     { path: '/', name: 'home', component: HomeView },
     { path: '/login', name: 'login', component: () => import('@/views/LoginView.vue'), meta: { guestOnly: true, title: 'Sign in' } },
@@ -25,9 +27,9 @@ export const router = createRouter({
     { path: '/dashboard', name: 'dashboard', component: () => import('@/views/DashboardView.vue'), meta: { auth: true, title: 'Dashboard' } },
     { path: '/screens', name: 'screens', component: () => import('@/views/ScreensView.vue'), meta: { title: 'Find screens' } },
     { path: '/screens/:id', name: 'screen', component: () => import('@/views/ScreenDetailView.vue'), props: true, meta: { title: 'Screen' } },
-    { path: '/ads', name: 'ads', component: () => import('@/views/AdsView.vue'), meta: { auth: true, terms: true, title: 'My ads' } },
+    { path: '/ads', name: 'ads', component: () => import('@/views/AdsView.vue'), meta: { auth: true, terms: true, identity: true, title: 'My ads' } },
     { path: '/bookings', name: 'bookings', component: () => import('@/views/BookingsView.vue'), meta: { auth: true, title: 'Bookings' } },
-    { path: '/wallet', name: 'wallet', component: () => import('@/views/WalletView.vue'), meta: { auth: true, terms: true, title: 'Wallet' } },
+    { path: '/wallet', name: 'wallet', component: () => import('@/views/WalletView.vue'), meta: { auth: true, terms: true, identity: true, title: 'Wallet' } },
     {
       path: '/verification',
       name: 'verification',
@@ -43,18 +45,35 @@ export const router = createRouter({
       props: true,
       meta: { auth: true, title: 'My screens' },
     },
-    { path: '/admin', name: 'admin', component: () => import('@/views/AdminView.vue'), meta: { auth: true, admin: true, title: 'Review' } },
+    { path: '/owner', name: 'owner', component: () => import('@/views/OwnerDashboardView.vue'), meta: { auth: true, title: 'Owner dashboard' } },
+    {
+      path: '/orgs/:org/screens/:screen/schedule',
+      name: 'screen-schedule',
+      component: () => import('@/views/ScreenScheduleView.vue'),
+      props: true,
+      meta: { auth: true, title: 'Booked slots' },
+    },
+    { path: '/4dmin', name: 'admin-login', component: () => import('@/views/AdminLoginView.vue'), meta: { title: 'Admin sign in' } },
+    { path: '/admin', name: 'admin', component: () => import('@/views/AdminView.vue'), meta: { auth: true, admin: true, title: 'Admin' } },
     { path: '/:pathMatch(.*)*', name: 'not-found', component: () => import('@/views/NotFoundView.vue'), meta: { title: 'Page not found' } },
   ],
 })
 
 router.beforeEach((to) => {
   const auth = useAuthStore()
+  if (to.meta.admin && !auth.isLoggedIn) return { name: 'admin-login' }
   if (to.meta.auth && !auth.isLoggedIn) return { name: 'login', query: { next: to.fullPath } }
-  if ((to.meta.guestOnly || to.name === 'home') && auth.isLoggedIn) return { name: 'dashboard' }
+  // A signed-in admin opening /4dmin goes straight to the panel.
+  if (to.name === 'admin-login' && auth.hasRole('admin') && auth.mfaVerified) return { name: 'admin' }
+  // Admins land on their panel instead of the advertiser checklist.
+  if (to.name === 'dashboard' && auth.hasRole('admin')) return { name: 'admin' }
+  if (to.meta.guestOnly && auth.isLoggedIn) return { name: 'dashboard' }
   // The API enforces this too; the guard only spares non-admins an empty page.
   if (to.meta.admin && !auth.hasRole('admin')) return { name: 'not-found', params: { pathMatch: ['admin'] } }
   if (to.meta.terms && auth.user && !auth.user.terms_accepted) return { name: 'welcome', query: { next: to.fullPath } }
+  if (to.meta.identity && auth.user && ['none', 'rejected'].includes(auth.user.document_status)) {
+    return { name: 'verification', query: { next: to.fullPath } }
+  }
 })
 
 router.afterEach((to) => {

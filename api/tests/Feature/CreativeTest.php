@@ -97,17 +97,17 @@ it('lets the review team approve an ad only after the advertiser\'s identity is 
         ->assertOk()->assertJsonPath('data.status', 'approved');
 });
 
-it('schedules waiting bookings on approval, and refunds them when the ad is refused', function () {
+it('refunds the bookings of an approved ad that is later pulled', function () {
     fundWallet($this->org, 1000);
     $screen = Screen::factory()->create();
-    $ad = Creative::factory()->inReview()->create(['organisation_id' => $this->org, 'uploaded_by' => $this->user]);
+    $ad = Creative::factory()->create(['organisation_id' => $this->org, 'uploaded_by' => $this->user]);
     $day = now('Asia/Kathmandu')->addDays(2)->toDateString();
     $book = fn ($h) => actingAsApi($this->user)->postJson("/api/v1/orgs/{$this->org->uuid}/bookings", [
-        'screen_id' => $screen->uuid, 'creative_id' => $ad->uuid, 'start_date' => $day, 'end_date' => $day, 'start_hour' => $h, 'end_hour' => $h + 1,
-    ])->assertCreated()->assertJsonPath('data.status', 'checking');
+        'screen_id' => $screen->uuid, 'creative_id' => $ad->uuid, 'start_date' => $day, 'end_date' => $day, 'start_time' => sprintf('%02d:00', $h), 'end_time' => sprintf('%02d:00', $h + 1),
+    ])->assertCreated()->assertJsonPath('data.status', 'scheduled');
     $book(8);
     $book(9);
-    expect(Wallet::first()->reserved_paisa)->toBe(2 * 30 * 200);
+    expect(Wallet::first()->balance_paisa)->toBe(100000 - 2 * 30 * 200);
 
     $reasons = actingAsApi($this->admin, mfa: true)->getJson('/api/v1/admin/creatives')->assertOk()->json('meta.reasons');
     expect(collect($reasons)->firstWhere('value', 'sexual')['label'])->toBe('Not permitted: sexual or pornographic content');
@@ -116,8 +116,8 @@ it('schedules waiting bookings on approval, and refunds them when the ad is refu
         ->assertOk()->assertJsonPath('data.reject_label', 'Not permitted: weapons or illegal goods');
 
     expect(Booking::pluck('status')->map->value->unique()->all())->toBe(['rejected'])
-        ->and(Wallet::first()->reserved_paisa)->toBe(0)
-        ->and(Wallet::first()->balance_paisa)->toBe(100000);
+        ->and(Wallet::first()->balance_paisa)->toBe(100000)
+        ->and(Wallet::first()->transactions()->where('type', 'refund')->count())->toBe(2);
 
     actingAsApi($this->user)->getJson("{$this->url}/{$ad->uuid}")
         ->assertJsonPath('data.reject_label', 'Not permitted: weapons or illegal goods')
@@ -129,7 +129,7 @@ it('keeps booked ads from being deleted', function () {
     $ad = Creative::factory()->create(['organisation_id' => $this->org, 'original_path' => 'creatives/x/y/original.png']);
     $day = now('Asia/Kathmandu')->addDays(2)->toDateString();
     actingAsApi($this->user)->postJson("/api/v1/orgs/{$this->org->uuid}/bookings", [
-        'screen_id' => Screen::factory()->create()->uuid, 'creative_id' => $ad->uuid, 'start_date' => $day, 'end_date' => $day, 'start_hour' => 8, 'end_hour' => 9,
+        'screen_id' => Screen::factory()->create()->uuid, 'creative_id' => $ad->uuid, 'start_date' => $day, 'end_date' => $day, 'start_time' => '08:00', 'end_time' => '09:00',
     ])->assertCreated();
 
     actingAsApi($this->user)->deleteJson("{$this->url}/{$ad->uuid}")->assertConflict();

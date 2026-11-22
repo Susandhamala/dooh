@@ -5,7 +5,7 @@ use App\Models\User;
 use Illuminate\Database\QueryException;
 
 beforeEach(function () {
-    $this->user = acceptTerms(User::factory()->create());
+    $this->user = verifyIdentity(acceptTerms(User::factory()->create()), 'pending');
     $this->org = Organisation::factory()->withMember($this->user)->create();
     $this->url = "/api/v1/orgs/{$this->org->uuid}/wallet";
 });

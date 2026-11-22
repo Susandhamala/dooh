@@ -54,6 +54,19 @@ export interface Screen {
   audience_notes: string | null
   content_rules?: string[]
   status: 'draft' | 'active' | 'paused'
+  /** Owner views only: the connected player. */
+  device?: Device | null
+}
+
+/** A screen's player (Raspberry Pi), known by its client certificate. */
+export interface Device {
+  id: string
+  online: boolean
+  enrolled_at: string
+  last_seen_at: string | null
+  last_ip: string | null
+  player_version: string | null
+  cert_expires_at: string
 }
 
 export interface Availability {
@@ -99,22 +112,73 @@ export interface Resolution {
   label: string
 }
 
+/** When a booked ad runs. The screen packs each loop, so it sets the exact second. */
+export interface BookingSchedule {
+  loop_seconds: number
+  spot_seconds: number
+  slot_count: number
+  /** Times the ad plays in every loop. */
+  repeats: number
+  /** How long one play takes (its slots). */
+  length_s: number
+  plays_per_day: number
+  /** "HH:MM:SS" of the first loops it plays in each day, and the last one. */
+  first_loops: string[]
+  last_loop: string | null
+}
+
 export interface Booking {
   id: string
-  screen?: { id: string; name: string; address: string | null }
+  screen?: { id: string; name: string; address: string | null; loop_seconds: number; spot_seconds: number }
   creative?: { id: string; name: string; kind: string; status: CreativeStatus } | null
   start_date: string
   end_date: string
-  start_hour: number
-  end_hour: number
+  /** Nepal time, "HH:MM"; the ad plays in every loop that starts inside [start_time, end_time). */
+  start_time: string
+  end_time: string
+  /** When the ad runs, to the second. */
+  schedule?: BookingSchedule
   status: string
+  /** Back-to-back slots the ad takes in the loop; price_per_play covers all of them. */
+  slot_count?: number
+  /** Times the ad plays in every loop. */
+  repeats?: number
   price_per_play: string
   plays_total: number
   plays_done: number
+  /** Paid in full when booked. */
   price: string
-  spent: string
-  held: string
+  /** What cancelling now would refund: the plays still to come. */
+  refundable: string
   created_at: string
+  /** Admin panel only. */
+  organisation?: { id: string; name: string }
+}
+
+export interface AdminUser {
+  id: string
+  name: string
+  phone: string | null
+  email: string | null
+  status: 'active' | 'suspended'
+  roles: Role[]
+  document_status: DocumentStatus
+  organisations: { id: string; name: string; type: 'advertiser' | 'owner' }[]
+  balance: string
+  bookings: number
+  created_at: string
+}
+
+export interface AdminOverview {
+  users: { total: number; new_week: number; suspended: number }
+  documents: Record<'pending' | 'approved' | 'rejected', number>
+  ads: Record<'processing' | 'failed' | 'in_review' | 'approved' | 'rejected', number>
+  bookings: Record<'scheduled' | 'live' | 'completed' | 'cancelled' | 'rejected', number>
+  screens: Record<'draft' | 'active' | 'paused', number>
+  money: { loaded: string; paid: string; balances: string }
+  daily: { date: string; amount: string }[]
+  recent_bookings: Booking[]
+  recent_users: AdminUser[]
 }
 
 export interface Wallet {
@@ -128,7 +192,7 @@ export interface Wallet {
 
 export interface WalletTransaction {
   id: string
-  type: 'topup' | 'hold' | 'charge' | 'release'
+  type: 'topup' | 'charge' | 'refund' | 'hold' | 'release'
   amount: string
   balance_after: string
   available_after: string
@@ -203,3 +267,41 @@ export const DOCUMENT_TYPES: Record<string, string> = {
 }
 
 export const GATEWAYS: Record<string, string> = { esewa: 'eSewa', khalti: 'Khalti', bank: 'Bank transfer' }
+
+/** Screen owner dashboard: GET /orgs/{org}/owner/overview */
+export interface OwnerOverview {
+  screens: number
+  published: number
+  players: number
+  players_online: number
+  live: number
+  upcoming: number
+  today: number
+  /** Rupees from plays already shown. */
+  earned: string
+}
+
+/** One screen's day for its owner: GET /orgs/{org}/screens/{screen}/schedule */
+export interface OwnerSchedule {
+  date: string
+  loop_seconds: number
+  spot_seconds: number
+  slots_per_loop: number
+  bookings: {
+    id: string
+    status: string
+    advertiser: string | null
+    ad: string | null
+    kind: 'image' | 'video' | null
+    thumb: string | null
+    start_time: string
+    end_time: string
+    starts_on: string
+    ends_on: string
+    slot_count: number
+    repeats: number
+    plays_per_day: number
+  }[]
+  /** Each hour of the day: ads in play order, with the first slot of each play. */
+  hours: { hour: number; used: number; ads: { booking: string; slots: number[]; slot_count: number }[] }[]
+}

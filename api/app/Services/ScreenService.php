@@ -5,7 +5,6 @@ namespace App\Services;
 use App\Enums\OrganisationType;
 use App\Models\Screen;
 use App\Models\User;
-use App\Repositories\BookingRepository;
 use App\Repositories\ScreenRepository;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Collection;
@@ -17,7 +16,7 @@ class ScreenService
 {
     public function __construct(
         private ScreenRepository $screens,
-        private BookingRepository $bookings,
+        private LoopService $loops,
         private OrganisationService $orgs,
     ) {}
 
@@ -32,8 +31,9 @@ class ScreenService
     }
 
     /**
-     * Free slots for every bookable hour of every day in [$from, $to]: `days[date][i]` is the free
-     * count for `hours[i]`. A slot is taken in an hour when a booking covers that day and that hour.
+     * Free slots for every bookable hour of every day in [$from, $to]: `days[date][i]` is how many
+     * of the loop's slots are still free in `hours[i]`. The loop is packed every hour, so an ad
+     * fits whenever its slots (× plays per loop) are free, wherever earlier ads sit.
      *
      * @return array{slots_per_loop: int, plays_per_hour: int, hours: list<int>, days: array<string, list<int>>}
      */
@@ -43,22 +43,12 @@ class ScreenService
         [$open, $close] = $screen->bookableHours();
         $hours = $open < $close ? range($open, $close - 1) : [];
         $slots = $screen->slotCount();
-
-        $taken = [];
-        foreach ($this->bookings->overlapping($screen, $from, $to) as $b) {
-            $first = $b->starts_on->max($from);
-            $last = $b->ends_on->min($to);
-            for ($d = $first; $d->lte($last); $d = $d->addDay()) {
-                for ($h = max($open, $b->start_hour); $h < min($close, $b->end_hour); $h++) {
-                    $taken[$d->toDateString()][$h] = ($taken[$d->toDateString()][$h] ?? 0) + 1;
-                }
-            }
-        }
+        $used = $this->loops->usage($screen, $from, $to);
 
         $days = [];
         for ($d = $from; $d->lte($to); $d = $d->addDay()) {
             $key = $d->toDateString();
-            $days[$key] = array_map(fn ($h) => max(0, $slots - ($taken[$key][$h] ?? 0)), $hours);
+            $days[$key] = array_map(fn (int $h) => max(0, $slots - ($used[$key][$h] ?? 0)), $hours);
         }
 
         return ['slots_per_loop' => $slots, 'plays_per_hour' => $screen->playsPerHour(), 'hours' => $hours, 'days' => $days];

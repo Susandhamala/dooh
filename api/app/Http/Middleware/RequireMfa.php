@@ -13,8 +13,13 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class RequireMfa
 {
-    public function handle(Request $request, Closure $next): Response
+    public function handle(Request $request, Closure $next, ?string $scope = null): Response
     {
+        // mfa:owner — screen owner actions; the lab can skip two-factor for them (never in production).
+        if ($scope === 'owner' && ! config('dooh.owner_requires_mfa')) {
+            return $next($request);
+        }
+
         if (auth('api')->payload()->get('mfa') === true) {
             return $next($request);
         }

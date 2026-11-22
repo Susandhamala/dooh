@@ -1,9 +1,9 @@
 [project]
 name = "dooh-player"
-version = "0.1.0"
+version = "0.2.0"
 description = "Screen player agent for Rentall Screen Ads"
 requires-python = ">=3.11"
-dependencies = ["pynacl>=1.5", "requests>=2.31"]
+dependencies = ["cryptography>=42", "pynacl>=1.5", "requests>=2.31"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
@@ -13,3 +13,7 @@ dooh-player = "dooh_player.agent:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# Only the agent is a package; pi/ holds install files for the Raspberry Pi.
+[tool.setuptools.packages.find]
+include = ["dooh_player*"]

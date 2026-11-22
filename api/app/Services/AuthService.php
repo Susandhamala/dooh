@@ -88,6 +88,23 @@ class AuthService
     }
 
     /**
+     * Admin sign-in on /4dmin: username and password. The token opens the admin panel straight
+     * away (no authenticator step), so only accounts with the admin role can use it.
+     */
+    public function adminLogin(string $username, string $password): array
+    {
+        $user = $this->users->findByUsername($username);
+
+        // Hash even when the user is missing so response time doesn't reveal which usernames exist.
+        $valid = Hash::check($password, $user?->password ?? '$argon2id$v=19$m=65536,t=4,p=1$c29tZXNhbHQ$RdescudvJCsgt3ub+b+dWRWJTmaaJObG');
+        if (! $user || ! $user->password || ! $valid || ! $user->hasRole('admin')) {
+            throw DomainError::unauthenticated('Wrong username or password.');
+        }
+
+        return $this->issue($user, mfa: true);
+    }
+
+    /**
      * Issue a token. `mfa` is true only after a TOTP check in this session; owner and admin
      * routes require it.
      */

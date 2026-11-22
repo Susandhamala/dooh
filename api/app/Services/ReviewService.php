@@ -41,7 +41,6 @@ class ReviewService
                 'review_note' => $note,
             ]);
             $this->creatives->save($creative);
-            $this->bookings->creativeApproved($creative);
 
             return $creative;
         });

@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import LocationPicker from '@/components/LocationPicker.vue'
+import ScreenDevicePanel from '@/components/ScreenDevicePanel.vue'
 import AlertBox from '@/components/ui/AlertBox.vue'
 import AppIcon from '@/components/ui/AppIcon.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
@@ -40,7 +41,7 @@ const blank = () => ({
   closes_at: '22:00',
   loop_seconds: 120,
   spot_seconds: 10,
-  price_per_play: 2,
+  price_per_play: 4,
   content_rules: [] as string[],
 })
 const form = ref(blank())
@@ -219,7 +220,7 @@ onMounted(load)
               <input id="s-close" v-model="form.closes_at" type="time" class="input" :class="{ 'input-error': errors.closes_at }" />
             </div>
             <div>
-              <label class="field-label" for="s-spot">Ad length (s)</label>
+              <label class="field-label" for="s-spot">Slot length (s)</label>
               <input id="s-spot" v-model.number="form.spot_seconds" type="number" min="5" max="120" class="input" :class="{ 'input-error': errors.spot_seconds }" />
               <p v-if="errors.spot_seconds" class="field-error">{{ errors.spot_seconds }}</p>
             </div>
@@ -231,10 +232,12 @@ onMounted(load)
           </div>
           <p class="rounded-xl bg-plum-50 px-3.5 py-2.5 text-sm text-plum-900">
             <strong>{{ slots }} {{ slots === 1 ? 'slot' : 'slots' }}</strong> per loop. Each ad plays once every
-            {{ form.loop_seconds }} s.
+            {{ form.loop_seconds }} s. A longer video takes several slots in a row and pays for each, so videos up to
+            {{ form.loop_seconds }} s can play here.
           </p>
           <div>
             <label class="field-label" for="s-price">Price per play (रू)</label>
+            <p class="mb-1.5 text-xs text-subtle">Kathmandu digital boards: about रू 2.50–5 per 10 s play (busy junctions at the top).</p>
             <input id="s-price" v-model.number="form.price_per_play" type="number" min="0.1" step="0.1" class="input" :class="{ 'input-error': errors.price_per_play }" />
             <p v-if="errors.price_per_play" class="field-error">{{ errors.price_per_play }}</p>
             <p v-else class="field-hint">
@@ -312,6 +315,7 @@ onMounted(load)
           <div><dt class="text-xs text-subtle">Slots</dt><dd class="font-bold">{{ s.slots_per_loop }} × {{ s.spot_seconds }} s</dd></div>
           <div><dt class="text-xs text-subtle">Per play</dt><dd class="price">{{ formatRupees(s.price_per_play) }}</dd></div>
         </dl>
+        <ScreenDevicePanel :org="props.org" :screen="s" @changed="load" @mfa="needsMfa" />
         <div class="mt-auto flex flex-wrap gap-2 pt-5">
           <button
             v-if="s.status !== 'active'"

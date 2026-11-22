@@ -6,6 +6,7 @@ use App\Enums\WalletEntryType;
 use App\Models\Organisation;
 use App\Models\Wallet;
 use App\Models\WalletTransaction;
+use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 
 class WalletRepository
@@ -59,5 +60,46 @@ class WalletRepository
     public function transactions(Wallet $wallet, int $perPage = 20): LengthAwarePaginator
     {
         return $wallet->transactions()->orderByDesc('id')->paginate($perPage);
+    }
+
+    /**
+     * Money across all wallets, in paisa: loaded by advertisers, paid for bookings (net of refunds),
+     * and still sitting in balances.
+     *
+     * @return array{loaded: int, paid: int, balances: int}
+     */
+    public function totals(): array
+    {
+        $sums = WalletTransaction::query()->selectRaw('type, sum(amount_paisa) as total')->groupBy('type')->pluck('total', 'type');
+
+        return [
+            'loaded' => (int) ($sums['topup'] ?? 0),
+            'paid' => -(int) ($sums['charge'] ?? 0) - (int) ($sums['refund'] ?? 0),
+            'balances' => (int) Wallet::query()->sum('balance_paisa'),
+        ];
+    }
+
+    /**
+     * Booking money per day (paid minus refunded) for the last $days days, oldest first, Nepal time.
+     *
+     * @return array<string, int> date => paisa
+     */
+    public function dailyPaid(int $days, string $timezone): array
+    {
+        $from = CarbonImmutable::now($timezone)->startOfDay()->subDays($days - 1);
+        $rows = WalletTransaction::query()
+            ->whereIn('type', [WalletEntryType::Charge, WalletEntryType::Refund])
+            ->where('created_at', '>=', $from->utc())
+            ->selectRaw('(created_at AT TIME ZONE \'UTC\' AT TIME ZONE ?)::date as day, -sum(amount_paisa) as total', [$timezone])
+            ->groupBy('day')
+            ->pluck('total', 'day');
+
+        $out = [];
+        for ($i = 0; $i < $days; $i++) {
+            $day = $from->addDays($i)->toDateString();
+            $out[$day] = (int) ($rows[$day] ?? 0);
+        }
+
+        return $out;
     }
 }

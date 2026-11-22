@@ -14,28 +14,30 @@ use App\Models\User;
 use App\Repositories\BookingRepository;
 use App\Repositories\ScreenRepository;
 use App\Support\Money;
+use App\Support\PlaySchedule;
 use Carbon\CarbonImmutable;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
-use Illuminate\Database\QueryException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Hourly, pay-per-play bookings.
+ * Pay-first bookings. First to pay gets the loop time.
  *
- * A booking takes one slot in the screen's loop, for the same hours on every day of a date range.
- * Cost = days × hours × plays per hour × price per play. The whole cost is held in the wallet when
- * booking; each play is charged from the hold; whatever is left is released when the booking ends,
- * is cancelled, or its ad is rejected.
+ * A booking reserves loop time on a screen: its ad's slots (one, or as many as a longer video
+ * needs), `repeats` times in every loop, through the same time window (to the minute) on every day
+ * of a date range. It doesn't own a fixed place: each hour the screen packs the booked ads back to
+ * back (LoopService), so any free slots can be booked, wherever they were. The ad plays in every
+ * loop that starts inside the window.
+ * Cost = loops × repeats × slots × price per play, paid in full from the wallet when booking.
+ * Only verified advertisers with an approved ad can book. Plays that don't happen (cancelled, ad
+ * pulled, screen off) are refunded.
  */
 class BookingService
 {
-    /** How long an old-style unpaid draft held its slot (kept for the release command). */
-    public const HOLD_MINUTES = 15;
-
     public const MAX_DAYS = 92;
 
-    private const EXCLUSION_VIOLATION = '23P01';
+    public const MAX_REPEATS = 3;
 
     public function __construct(
         private BookingRepository $bookings,
@@ -44,6 +46,7 @@ class BookingService
         private CreativeService $creatives,
         private WalletService $wallets,
         private DocumentService $documents,
+        private LoopService $loops,
     ) {}
 
     /** @return Collection<int, Booking> */
@@ -63,22 +66,24 @@ class BookingService
 
     /**
      * What a booking would cost. The portal shows the same sum live; this is the one that counts.
+     * The ad plays $repeats times in every loop that starts inside [$startMinute, $endMinute); an ad
+     * that takes $slots slots costs $slots times the screen's price for each play.
      *
-     * @return array{days: int, hours: int, plays_per_hour: int, plays_per_day: int, plays_total: int, price_per_play_paisa: int, total_paisa: int}
+     * @return array{days: int, slots: int, repeats: int, plays_per_hour: int, plays_per_day: int, plays_total: int, price_per_play_paisa: int, total_paisa: int}
      */
-    public static function quote(Screen $screen, CarbonImmutable $start, CarbonImmutable $end, int $startHour, int $endHour): array
+    public static function quote(Screen $screen, CarbonImmutable $start, CarbonImmutable $end, int $startMinute, int $endMinute, int $slots = 1, int $repeats = 1): array
     {
         $days = (int) $start->diffInDays($end) + 1;
-        $hours = $endHour - $startHour;
-        $perHour = $screen->playsPerHour();
-        $plays = $days * $hours * $perHour;
-        $price = Money::toPaisa($screen->price_per_play);
+        $perDay = count(PlaySchedule::loopStarts($screen->loop_seconds, $startMinute, $endMinute)) * $repeats;
+        $plays = $days * $perDay;
+        $price = Money::toPaisa($screen->price_per_play) * $slots;
 
         return [
             'days' => $days,
-            'hours' => $hours,
-            'plays_per_hour' => $perHour,
-            'plays_per_day' => $hours * $perHour,
+            'slots' => $slots,
+            'repeats' => $repeats,
+            'plays_per_hour' => $screen->playsPerHour() * $repeats,
+            'plays_per_day' => $perDay,
             'plays_total' => $plays,
             'price_per_play_paisa' => $price,
             'total_paisa' => $plays * $price,
@@ -89,62 +94,68 @@ class BookingService
     {
         $org = $this->orgs->membership($user, $orgUuid, OrganisationType::Advertiser, write: true)->organisation;
 
-        if (! in_array($this->documents->status($user), [ReviewStatus::Pending->value, ReviewStatus::Approved->value], true)) {
-            throw new DomainError('Add your identity document before booking.', 403, ['document' => ['required']]);
+        $doc = $this->documents->status($user);
+        if ($doc !== ReviewStatus::Approved->value) {
+            throw new DomainError(
+                $doc === ReviewStatus::Pending->value
+                    ? 'Your identity document is still being checked. You can book once it is verified.'
+                    : 'Verify your identity before booking.',
+                403,
+                ['document' => [$doc === ReviewStatus::Pending->value ? 'pending' : 'required']],
+            );
         }
 
         $screen = $this->screens->findPublic($data['screen_id']) ?? throw (new ModelNotFoundException)->setModel(Screen::class);
         $creative = $this->creatives->findIn($org, $data['creative_id']);
-        $this->ensureCreativeFits($creative, $screen);
+        $repeats = (int) ($data['repeats'] ?? 1);
+        $this->ensureCreativeFits($creative, $screen, $repeats);
 
         $start = CarbonImmutable::parse($data['start_date']);
         $end = CarbonImmutable::parse($data['end_date']);
-        $startHour = (int) $data['start_hour'];
-        $endHour = (int) $data['end_hour'];
-        $this->ensureTimes($screen, $start, $end, $startHour, $endHour);
+        $startMinute = PlaySchedule::minutes($data['start_time']);
+        $endMinute = PlaySchedule::minutes($data['end_time']);
+        $this->ensureTimes($screen, $start, $end, $startMinute, $endMinute);
 
-        $q = self::quote($screen, $start, $end, $startHour, $endHour);
-        $status = $creative->status === CreativeStatus::Approved ? BookingStatus::Scheduled : BookingStatus::Checking;
-
-        for ($attempt = 0; $attempt < 3; $attempt++) {
-            $taken = $this->bookings->takenSlots($screen, $start, $end, $startHour, $endHour);
-            $free = array_values(array_diff(range(0, $screen->slotCount() - 1), $taken));
-            if ($free === []) {
-                throw DomainError::conflict('Those hours are fully booked on at least one day. Pick other hours or dates.');
-            }
-
-            try {
-                return DB::transaction(function () use ($org, $user, $screen, $creative, $start, $end, $startHour, $endHour, $q, $status, $free) {
-                    $booking = $this->bookings->create([
-                        'organisation_id' => $org->getKey(),
-                        'screen_id' => $screen->getKey(),
-                        'creative_id' => $creative->getKey(),
-                        'slot_index' => $free[0],
-                        'date_range' => Booking::dateRange($start, $end),
-                        'start_hour' => $startHour,
-                        'end_hour' => $endHour,
-                        'status' => $status,
-                        'price_per_play' => $screen->price_per_play,
-                        'plays_total' => $q['plays_total'],
-                        'price' => Money::toRupees($q['total_paisa']),
-                    ]);
-                    $this->wallets->hold(
-                        $org, $q['total_paisa'],
-                        "Held for {$q['plays_total']} plays on {$screen->name}",
-                        $booking->uuid, $user->getKey(),
-                    );
-
-                    return $booking->load(['screen', 'creative']);
-                });
-            } catch (QueryException $e) {
-                if ($e->getCode() !== self::EXCLUSION_VIOLATION) {
-                    throw $e;
-                }
-                // Someone took that slot between our read and insert; look again.
-            }
+        $need = $screen->slotsFor($creative);
+        $q = self::quote($screen, $start, $end, $startMinute, $endMinute, $need, $repeats);
+        if ($q['plays_per_day'] === 0) {
+            throw new DomainError('That time is too short for your ad to play. Make it longer.', 422, [
+                'end_time' => ["Choose at least {$screen->loop_seconds} s."],
+            ]);
         }
 
-        throw DomainError::conflict('This screen is busy right now. Please try again.');
+        return DB::transaction(function () use ($org, $user, $screen, $creative, $start, $end, $startMinute, $endMinute, $q, $need, $repeats) {
+            // One booking at a time per screen, so two people paying at once can't overbook it.
+            $this->screens->lock($screen);
+            $free = $this->loops->freeSlots($screen, $start, $end, $startMinute, $endMinute);
+            if ($free < $need * $repeats) {
+                throw DomainError::conflict($free === 0
+                    ? 'The screen is fully booked at those times. Pick other times or dates.'
+                    : "Only {$free} of the screen's slots are free at those times, and your ad needs ".($need * $repeats).'. Pick other times, fewer plays per loop or a shorter ad.');
+            }
+
+            $booking = $this->bookings->create([
+                'organisation_id' => $org->getKey(),
+                'screen_id' => $screen->getKey(),
+                'creative_id' => $creative->getKey(),
+                'slot_count' => $need,
+                'repeats' => $repeats,
+                'date_range' => Booking::dateRange($start, $end),
+                'start_minute' => $startMinute,
+                'end_minute' => $endMinute,
+                'status' => BookingStatus::Scheduled,
+                'price_per_play' => Money::toRupees($q['price_per_play_paisa']),
+                'plays_total' => $q['plays_total'],
+                'price' => Money::toRupees($q['total_paisa']),
+            ]);
+            $this->wallets->pay(
+                $org, $q['total_paisa'],
+                "Paid for {$q['plays_total']} plays on {$screen->name}",
+                $booking->uuid, $user->getKey(),
+            );
+
+            return $booking->load(['screen', 'creative']);
+        });
     }
 
     public function cancel(User $user, string $orgUuid, string $bookingUuid): Booking
@@ -152,53 +163,47 @@ class BookingService
         $booking = $this->find($user, $orgUuid, $bookingUuid);
         $this->orgs->membership($user, $orgUuid, OrganisationType::Advertiser, write: true);
 
-        return DB::transaction(function () use ($booking, $user) {
-            $b = $this->bookings->lock($booking);
-            if (! $b->status->isCancellable()) {
-                throw DomainError::conflict("A {$b->status->value} booking can't be cancelled.");
-            }
-            $this->close($b, BookingStatus::Cancelled, 'Booking cancelled', $user->getKey());
-
-            return $b;
-        });
+        return $this->cancelBooking($booking, 'Booking cancelled', $user->getKey());
     }
 
-    /** Money still held for plays that haven't happened. */
+    /** @return LengthAwarePaginator<int, Booking> */
+    public function paginateForAdmin(?string $status, ?string $search): LengthAwarePaginator
+    {
+        return $this->bookings->paginateForAdmin($status, $search);
+    }
+
+    /** The review team stops a booking (e.g. a complaint); unplayed plays are refunded. */
+    public function cancelByAdmin(User $admin, string $bookingUuid): Booking
+    {
+        $booking = $this->bookings->findByUuid($bookingUuid) ?? throw (new ModelNotFoundException)->setModel(Booking::class);
+
+        return $this->cancelBooking($booking, 'Cancelled by the review team', $admin->getKey());
+    }
+
+    /** Money paid for plays that haven't happened. */
     public function remainingPaisa(Booking $b): int
     {
         return max(0, Money::toPaisa($b->price) - $b->plays_done * Money::toPaisa($b->price_per_play));
     }
 
-    /** The review team approved the ad: bookings that were waiting on it are scheduled. */
-    public function creativeApproved(Creative $creative): void
-    {
-        foreach ($this->bookings->waitingOnCreative($creative) as $booking) {
-            $b = $this->bookings->lock($booking);
-            if ($b->status === BookingStatus::Checking) {
-                $b->status = BookingStatus::Scheduled;
-                $this->bookings->save($b);
-            }
-        }
-    }
-
-    /** The ad was refused (or pulled): its open bookings end and the unused money goes back. */
+    /** The ad was pulled: its open bookings end and unplayed plays are refunded. */
     public function creativeRejected(Creative $creative): void
     {
         foreach ($this->bookings->openForCreative($creative) as $booking) {
             $b = $this->bookings->lock($booking);
-            $this->close($b, BookingStatus::Rejected, 'Ad not approved');
+            $this->close($b, BookingStatus::Rejected, 'Ad removed by the review team');
         }
     }
 
     /**
      * Move bookings along by the clock: scheduled → live at the first booked hour, → completed after
-     * the last one (unused money released). Bookings whose ad was never approved in time are cancelled.
+     * the last one (plays that didn't happen are refunded).
      *
-     * @return array{live: int, completed: int, expired: int}
+     * @return array{live: int, completed: int}
      */
     public function advance(CarbonImmutable $now): array
     {
-        $out = ['live' => 0, 'completed' => 0, 'expired' => 0];
+        $out = ['live' => 0, 'completed' => 0];
         $today = $now->setTimezone(config('dooh.timezone'))->startOfDay();
 
         foreach ($this->bookings->dueForUpdate($today) as $booking) {
@@ -206,11 +211,8 @@ class BookingService
                 $b = $this->bookings->lock($booking);
                 [$startAt, $endAt] = $this->window($b);
 
-                if ($b->status === BookingStatus::Checking && $endAt <= $now) {
-                    $this->close($b, BookingStatus::Cancelled, 'Ad was not approved in time');
-                    $out['expired']++;
-                } elseif (in_array($b->status, [BookingStatus::Scheduled, BookingStatus::Live], true) && $endAt <= $now) {
-                    $this->close($b, BookingStatus::Completed, 'Booking finished, unused plays returned');
+                if ($endAt <= $now) {
+                    $this->close($b, BookingStatus::Completed, 'Booking finished, missed plays refunded');
                     $out['completed']++;
                 } elseif ($b->status === BookingStatus::Scheduled && $startAt <= $now) {
                     $b->status = BookingStatus::Live;
@@ -224,8 +226,8 @@ class BookingService
     }
 
     /**
-     * When the booking starts and ends, in UTC: the first booked hour of the first day and the end of
-     * the last booked hour of the last day, Nepal time.
+     * When the booking starts and ends, in UTC: the start of the window on the first day and its end
+     * on the last day, Nepal time.
      *
      * @return array{0: CarbonImmutable, 1: CarbonImmutable}
      */
@@ -234,32 +236,41 @@ class BookingService
         $tz = config('dooh.timezone');
 
         return [
-            CarbonImmutable::parse($b->starts_on->toDateString(), $tz)->addHours($b->start_hour)->utc(),
-            CarbonImmutable::parse($b->ends_on->toDateString(), $tz)->addHours($b->end_hour)->utc(),
+            CarbonImmutable::parse($b->starts_on->toDateString(), $tz)->addMinutes($b->start_minute)->utc(),
+            CarbonImmutable::parse($b->ends_on->toDateString(), $tz)->addMinutes($b->end_minute)->utc(),
         ];
     }
 
-    public function releaseExpiredHolds(): int
+    private function cancelBooking(Booking $booking, string $why, int $userId): Booking
     {
-        return $this->bookings->releaseExpiredHolds(CarbonImmutable::now());
+        return DB::transaction(function () use ($booking, $why, $userId) {
+            $b = $this->bookings->lock($booking);
+            if (! $b->status->isCancellable()) {
+                throw DomainError::conflict("A {$b->status->value} booking can't be cancelled.");
+            }
+            $this->close($b, BookingStatus::Cancelled, $why, $userId);
+
+            return $b;
+        });
     }
 
-    /** End a locked booking with $status and give back what it still holds. */
+    /** End a locked booking with $status and refund the plays that won't happen. */
     private function close(Booking $b, BookingStatus $status, string $why, ?int $userId = null): void
     {
-        $this->wallets->release($b->organisation, $this->remainingPaisa($b), "{$why}: {$b->screen->name}", $b->uuid, $userId);
+        $this->wallets->refund($b->organisation, $this->remainingPaisa($b), "{$why}: {$b->screen->name}", $b->uuid, $userId);
         $b->status = $status;
         $b->hold_expires_at = null;
         $this->bookings->save($b);
     }
 
-    private function ensureCreativeFits(Creative $creative, Screen $screen): void
+    private function ensureCreativeFits(Creative $creative, Screen $screen, int $repeats = 1): void
     {
         $fail = fn (string $msg) => new DomainError($msg, 422, ['creative_id' => [$msg]]);
 
-        if (! $creative->status->isBookable()) {
+        if ($creative->status !== CreativeStatus::Approved) {
             throw $fail(match ($creative->status) {
                 CreativeStatus::Processing => 'This ad is still being checked. Try again in a minute.',
+                CreativeStatus::InReview => 'This ad is waiting for our review team. You can book it once it is approved.',
                 CreativeStatus::Failed => 'This ad failed the file checks. Upload a fixed version.',
                 default => 'This ad was not approved, so it cannot be booked.',
             });
@@ -267,8 +278,13 @@ class BookingService
         if (! $creative->fits($screen)) {
             throw $fail("This ad is {$creative->width_px}×{$creative->height_px} ({$creative->orientation()}), but the screen is {$screen->width_px}×{$screen->height_px} ({$screen->orientation}). Upload a version in the screen's shape.");
         }
-        if ($creative->kind === 'video' && $creative->duration_s > $screen->spot_seconds + 0.5) {
-            throw $fail('Your video is '.round((float) $creative->duration_s)." s, but this screen's slot is {$screen->spot_seconds} s. Upload a shorter cut.");
+        if ($screen->slotsFor($creative) > $screen->slotCount()) {
+            throw $fail('Your video is '.round((float) $creative->duration_s)." s, but this screen's whole loop is {$screen->loop_seconds} s. Upload a cut of {$screen->loop_seconds} s or less.");
+        }
+        if ($screen->slotsFor($creative) * $repeats > $screen->slotCount()) {
+            throw new DomainError("Playing it {$repeats} times would take more than the whole loop. Pick fewer plays per loop.", 422, [
+                'repeats' => ['Too many plays per loop for this ad.'],
+            ]);
         }
         $rule = $creative->category->blockedBy();
         if ($rule && $screen->contentRules->contains(fn ($r) => $r->rule === $rule)) {
@@ -276,12 +292,13 @@ class BookingService
         }
     }
 
-    private function ensureTimes(Screen $screen, CarbonImmutable $start, CarbonImmutable $end, int $startHour, int $endHour): void
+    private function ensureTimes(Screen $screen, CarbonImmutable $start, CarbonImmutable $end, int $startMinute, int $endMinute): void
     {
-        [$open, $close] = $screen->bookableHours();
-        if ($startHour < $open || $endHour > $close || $startHour >= $endHour) {
-            throw new DomainError("Pick hours between {$open}:00 and {$close}:00, when the screen is on.", 422, [
-                'start_hour' => ["Choose hours between {$open}:00 and {$close}:00."],
+        [$open, $close] = $screen->bookableMinutes();
+        if ($startMinute < $open || $endMinute > $close || $startMinute >= $endMinute) {
+            [$o, $c] = [PlaySchedule::time($open), PlaySchedule::time($close)];
+            throw new DomainError("Pick a time between {$o} and {$c}, when the screen is on.", 422, [
+                'start_time' => ["Choose a time between {$o} and {$c}."],
             ]);
         }
         if ($start->diffInDays($end) + 1 > self::MAX_DAYS) {
@@ -291,9 +308,9 @@ class BookingService
         if ($start->toDateString() < $now->toDateString()) {
             throw new DomainError('The start date has passed.', 422, ['start_date' => ['Pick today or later.']]);
         }
-        if ($start->toDateString() === $now->toDateString() && $startHour <= $now->hour) {
-            throw new DomainError('That hour has already started today. Pick a later hour or start tomorrow.', 422, [
-                'start_hour' => ['Pick a later hour.'],
+        if ($start->toDateString() === $now->toDateString() && $startMinute <= $now->hour * 60 + $now->minute) {
+            throw new DomainError('That time has already passed today. Pick a later time or start tomorrow.', 422, [
+                'start_time' => ['Pick a later time.'],
             ]);
         }
     }

@@ -50,9 +50,9 @@ export function formatHour(h: number): string {
   return `${String(h % 24).padStart(2, '0')}:00`
 }
 
-/** "08:00–10:00" */
-export function formatHours(start: number, end: number): string {
-  return `${formatHour(start)}–${end === 24 ? '24:00' : formatHour(end)}`
+/** "08:15–10:00" from two "HH:MM" times. */
+export function formatWindow(start: string, end: string): string {
+  return `${start}–${end}`
 }
 
 /** Rupees with paisa when there are any: रू 2, रू 2.50, रू 1,234.50 */
@@ -67,15 +67,6 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
-/** What a booking costs: the same sum the API uses. */
-export function quote(o: { days: number; startHour: number; endHour: number; playsPerHour: number; pricePerPlay: string | number }) {
-  const hours = Math.max(0, o.endHour - o.startHour)
-  const playsPerDay = hours * o.playsPerHour
-  const plays = Math.max(0, o.days) * playsPerDay
-  const paisa = Math.round(Number(o.pricePerPlay) * 100)
-  return { hours, playsPerDay, plays, total: (plays * paisa) / 100 }
-}
-
 export type Tone = 'neutral' | 'plum' | 'success' | 'warning' | 'danger' | 'teal'
 
 /** Every status the API sends, as words and a colour. Status is never shown by colour alone. */
@@ -85,7 +76,7 @@ const STATUSES: Record<string, { label: string; tone: Tone }> = {
   checking: { label: 'Ad in review', tone: 'warning' },
   awaiting_owner: { label: 'Awaiting owner', tone: 'warning' },
   approved: { label: 'Approved', tone: 'success' },
-  scheduled: { label: 'Scheduled', tone: 'teal' },
+  scheduled: { label: 'Booked', tone: 'teal' },
   live: { label: 'Live', tone: 'success' },
   completed: { label: 'Completed', tone: 'neutral' },
   rejected: { label: 'Rejected', tone: 'danger' },

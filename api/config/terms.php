@@ -7,7 +7,7 @@
  * Have a lawyer review the wording before the real launch.
  */
 return [
-    'version' => '2026-10-30',
+    'version' => '2026-11-19',
 
     'title' => 'Terms of use and content policy',
 
@@ -27,8 +27,8 @@ return [
     'rules' => [
         'Every ad is checked by the RentALL Nepal review team before it plays. We can refuse or remove any ad, with a reason.',
         'Screen owners can also refuse whole categories, such as alcohol, tobacco or political ads, on their screens.',
-        'You load money into your wallet before booking. The cost of a booking is held from your balance and each play is charged as it happens. Plays that do not happen are returned to your balance.',
-        'You must give true identity details and a valid document. Accounts with false documents are closed.',
+        'You load money into your wallet first. A booking is paid in full from your balance when you book, and the first to pay gets the slot. Plays that do not happen are refunded to your wallet.',
+        'You must give true identity details and a valid document, and your identity must be verified before you can book. Accounts with false documents are closed.',
         'We keep records of uploads, approvals, plays and payments. They cannot be edited and can be shared with the authorities.',
     ],
 

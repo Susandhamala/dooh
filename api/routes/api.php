@@ -1,8 +1,11 @@
 <?php
 
+use App\Http\Controllers\Api\V1\Admin\BookingAdminController;
 use App\Http\Controllers\Api\V1\Admin\CreativeReviewController;
+use App\Http\Controllers\Api\V1\Admin\DashboardController;
 use App\Http\Controllers\Api\V1\Admin\DocumentReviewController;
 use App\Http\Controllers\Api\V1\Admin\OrganisationAdminController;
+use App\Http\Controllers\Api\V1\Admin\UserAdminController;
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\BookingController;
 use App\Http\Controllers\Api\V1\CampaignController;
@@ -11,8 +14,10 @@ use App\Http\Controllers\Api\V1\DocumentController;
 use App\Http\Controllers\Api\V1\HealthController;
 use App\Http\Controllers\Api\V1\MediaController;
 use App\Http\Controllers\Api\V1\OrganisationController;
+use App\Http\Controllers\Api\V1\OwnerScheduleController;
 use App\Http\Controllers\Api\V1\OwnerScreenController;
 use App\Http\Controllers\Api\V1\ScreenCatalogueController;
+use App\Http\Controllers\Api\V1\ScreenDeviceController;
 use App\Http\Controllers\Api\V1\TermsController;
 use App\Http\Controllers\Api\V1\WalletController;
 use Illuminate\Support\Facades\Route;
@@ -27,6 +32,7 @@ Route::prefix('v1')->group(function () {
         Route::post('register', [AuthController::class, 'register']);
         Route::post('login', [AuthController::class, 'login']);
         Route::post('sso', [AuthController::class, 'sso']);
+        Route::post('admin/login', [AuthController::class, 'adminLogin']);
     });
 
     // Public: the terms everyone must accept, and the screen catalogue.
@@ -63,13 +69,14 @@ Route::prefix('v1')->group(function () {
         Route::prefix('orgs/{org}')->whereUuid('org')->group(function () {
             Route::get('/', [OrganisationController::class, 'show']);
 
-            // Advertiser side: wallet, ads, bookings.
+            // Advertiser side: wallet, ads, bookings. Loading money and uploading need an identity
+            // document submitted; booking needs it approved (checked in BookingService).
             Route::get('wallet', [WalletController::class, 'show']);
             Route::get('wallet/transactions', [WalletController::class, 'transactions']);
-            Route::post('wallet/topup', [WalletController::class, 'topUp'])->middleware('terms');
+            Route::post('wallet/topup', [WalletController::class, 'topUp'])->middleware(['terms', 'identity']);
 
             Route::get('creatives', [CreativeController::class, 'index']);
-            Route::post('creatives', [CreativeController::class, 'store'])->middleware('terms');
+            Route::post('creatives', [CreativeController::class, 'store'])->middleware(['terms', 'identity']);
             Route::get('creatives/{creative}', [CreativeController::class, 'show'])->whereUuid('creative');
             Route::delete('creatives/{creative}', [CreativeController::class, 'destroy'])->whereUuid('creative');
 
@@ -83,17 +90,34 @@ Route::prefix('v1')->group(function () {
             Route::post('campaigns', [CampaignController::class, 'store']);
             Route::get('campaigns/{campaign}', [CampaignController::class, 'show'])->whereUuid('campaign');
 
-            // Owner side: changes need a two-factor-verified session.
+            // Owner side: dashboard, booked slots and play order. Changes need a two-factor-verified
+            // session (lab: OWNER_REQUIRE_MFA=false skips that; production always asks).
             Route::get('screens', [OwnerScreenController::class, 'index']);
             Route::get('screens/{screen}', [OwnerScreenController::class, 'show'])->whereUuid('screen');
-            Route::middleware('mfa')->group(function () {
+            Route::get('screens/{screen}/device', [ScreenDeviceController::class, 'show'])->whereUuid('screen');
+            Route::get('owner/overview', [OwnerScheduleController::class, 'overview']);
+            Route::get('screens/{screen}/schedule', [OwnerScheduleController::class, 'schedule'])->whereUuid('screen');
+            Route::middleware('mfa:owner')->group(function () {
+                Route::post('screens/{screen}/bookings/{booking}/move', [OwnerScheduleController::class, 'move'])->whereUuid(['screen', 'booking']);
                 Route::post('screens', [OwnerScreenController::class, 'store']);
                 Route::patch('screens/{screen}', [OwnerScreenController::class, 'update'])->whereUuid('screen');
+                // Connecting a player (Raspberry Pi) to a screen, and disconnecting a lost one.
+                Route::post('screens/{screen}/device/code', [ScreenDeviceController::class, 'code'])->whereUuid('screen');
+                Route::post('screens/{screen}/device/revoke', [ScreenDeviceController::class, 'revoke'])->whereUuid('screen');
             });
         });
 
         // Platform admin and the ad review team: two-factor always.
         Route::prefix('admin')->middleware(['role:admin,api', 'mfa'])->group(function () {
+            Route::get('overview', DashboardController::class);
+
+            Route::get('users', [UserAdminController::class, 'index']);
+            Route::post('users/{user}/suspend', [UserAdminController::class, 'suspend'])->whereUuid('user');
+            Route::post('users/{user}/reinstate', [UserAdminController::class, 'reinstate'])->whereUuid('user');
+
+            Route::get('bookings', [BookingAdminController::class, 'index']);
+            Route::post('bookings/{booking}/cancel', [BookingAdminController::class, 'cancel'])->whereUuid('booking');
+
             Route::get('orgs', [OrganisationAdminController::class, 'index']);
             Route::post('orgs/{org}/verify', [OrganisationAdminController::class, 'verify'])->whereUuid('org');
             Route::post('orgs/{org}/suspend', [OrganisationAdminController::class, 'suspend'])->whereUuid('org');

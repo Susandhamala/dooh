@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Enums\BookingStatus;
 use App\Models\Concerns\HasPublicUuid;
+use App\Support\PlaySchedule;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
@@ -13,8 +14,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 #[Fillable([
-    'organisation_id', 'campaign_id', 'screen_id', 'creative_id', 'slot_index', 'status', 'price', 'hold_expires_at',
-    'date_range', 'start_hour', 'end_hour', 'price_per_play', 'plays_total', 'plays_done',
+    'organisation_id', 'campaign_id', 'screen_id', 'creative_id', 'slot_count', 'repeats', 'status', 'price', 'hold_expires_at',
+    'date_range', 'start_minute', 'end_minute', 'price_per_play', 'plays_total', 'plays_done', 'loop_order',
 ])]
 #[Hidden(['id', 'organisation_id', 'campaign_id', 'screen_id', 'creative_id'])]
 class Booking extends Model
@@ -52,6 +53,17 @@ class Booking extends Model
         return intdiv($this->plays_total, max(1, $this->starts_on->diffInDays($this->ends_on) + 1));
     }
 
+    /**
+     * Seconds after midnight (Nepal time) at which a loop starts inside the booked window; the ad
+     * plays `repeats` times in each of those loops.
+     *
+     * @return list<int>
+     */
+    public function loopStarts(): array
+    {
+        return PlaySchedule::loopStarts($this->screen->loop_seconds, $this->start_minute, $this->end_minute);
+    }
+
     /** Postgres daterange for the inclusive days [$start, $end]. */
     public static function dateRange(CarbonImmutable $start, CarbonImmutable $end): string
     {
@@ -77,8 +89,10 @@ class Booking extends Model
             'price' => 'decimal:2',
             'price_per_play' => 'decimal:2',
             'hold_expires_at' => 'immutable_datetime',
-            'start_hour' => 'integer',
-            'end_hour' => 'integer',
+            'start_minute' => 'integer',
+            'end_minute' => 'integer',
+            'slot_count' => 'integer',
+            'repeats' => 'integer',
             'plays_total' => 'integer',
             'plays_done' => 'integer',
         ];

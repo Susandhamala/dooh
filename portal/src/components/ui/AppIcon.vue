@@ -36,6 +36,8 @@ const PATHS = {
   phone: 'M7 3h10v18H7zM11 18h2',
   ban: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM5.6 5.6l12.8 12.8',
   gavel: 'M14 4l6 6M11 7l6 6M12.5 5.5l-6 6M9 15l-6 6M4 20h9',
+  grid: 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z',
+  search: 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20 20l-4-4',
 } as const
 
 withDefaults(defineProps<{ name: IconName; label?: string; size?: number }>(), { size: 20, label: undefined })

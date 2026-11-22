@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import AlertBox from '@/components/ui/AlertBox.vue'
 import AppIcon, { type IconName } from '@/components/ui/AppIcon.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
-import { formatHours, formatRange, formatRupees } from '@/lib/format'
+import { formatWindow, formatRange, formatRupees } from '@/lib/format'
 import { errorMessage, get } from '@/lib/http'
 import type { Booking, Creative } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth'
@@ -23,7 +23,7 @@ const firstName = computed(() => (auth.user?.name ?? '').split(' ')[0])
 const doc = computed(() => auth.user?.document_status ?? 'none')
 const approvedAds = computed(() => ads.value.filter((a) => a.status === 'approved').length)
 const reviewAds = computed(() => ads.value.filter((a) => a.status === 'in_review' || a.status === 'processing').length)
-const activeBookings = computed(() => bookings.value.filter((b) => ['checking', 'scheduled', 'live'].includes(b.status)))
+const activeBookings = computed(() => bookings.value.filter((b) => ['scheduled', 'live'].includes(b.status)))
 const liveCount = computed(() => bookings.value.filter((b) => b.status === 'live').length)
 
 interface Step {
@@ -50,7 +50,7 @@ const steps = computed<Step[]>(() => [
     title: 'Verify your identity',
     body:
       doc.value === 'pending'
-        ? 'Your document is being checked. You can carry on meanwhile.'
+        ? 'Your document is being checked. Booking opens once you are verified.'
         : doc.value === 'rejected'
           ? 'Your document was refused. Please upload a clear one.'
           : 'Upload your citizenship, passport, national ID or company papers.',
@@ -62,7 +62,7 @@ const steps = computed<Step[]>(() => [
   },
   {
     title: 'Load money into your wallet',
-    body: 'Pay with eSewa, Khalti or bank. Each play is charged from it.',
+    body: 'Pay with eSewa, Khalti or bank. Bookings are paid from it.',
     done: Number(wallets.wallet?.balance ?? 0) > 0,
     icon: 'wallet',
     to: '/wallet',
@@ -70,7 +70,7 @@ const steps = computed<Step[]>(() => [
   },
   {
     title: 'Upload your ad',
-    body: 'An image or a short video. Our team checks every ad.',
+    body: 'An image or a short video. Our team approves every ad before it can be booked.',
     done: ads.value.length > 0,
     waiting: ads.value.length > 0 && approvedAds.value === 0,
     icon: 'upload',
@@ -79,7 +79,7 @@ const steps = computed<Step[]>(() => [
   },
   {
     title: 'Book a screen',
-    body: 'Pick a place on the map, the dates and the hours.',
+    body: 'Pick a screen on the map, the days, the time and your place in the loop, then pay. First to pay gets the slot.',
     done: bookings.value.length > 0,
     icon: 'map',
     to: '/screens',
@@ -156,6 +156,20 @@ onMounted(load)
     <div class="shell grid grid-cols-[minmax(0,1fr)] gap-6 py-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
       <AlertBox v-if="error" class="lg:col-span-2">{{ error }}</AlertBox>
 
+      <!-- Screen owners: the other side of the platform -->
+      <RouterLink
+        v-if="orgs.owners.length"
+        to="/owner"
+        class="card-interactive flex items-center gap-4 p-4 sm:p-5 lg:col-span-2"
+      >
+        <span class="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-teal-50 text-teal-dark"><AppIcon name="screen" /></span>
+        <span class="min-w-0 flex-1">
+          <span class="block font-bold text-ink">Owner dashboard</span>
+          <span class="block text-sm text-muted">Your screens, their Raspberry Pi players, booked slots and play order.</span>
+        </span>
+        <AppIcon name="arrow" :size="18" class="text-plum-700" />
+      </RouterLink>
+
       <!-- Getting started -->
       <section class="card p-5 sm:p-6" aria-labelledby="steps-h">
         <div class="flex items-center justify-between gap-4">
@@ -207,7 +221,7 @@ onMounted(load)
             <div class="flex items-start justify-between gap-3">
               <div class="min-w-0">
                 <p class="truncate font-bold">{{ b.screen?.name }}</p>
-                <p class="text-sm text-subtle">{{ formatRange(b.start_date, b.end_date) }} · {{ formatHours(b.start_hour, b.end_hour) }}</p>
+                <p class="text-sm text-subtle">{{ formatRange(b.start_date, b.end_date) }} · {{ formatWindow(b.start_time, b.end_time) }}</p>
               </div>
               <StatusBadge :status="b.status" />
             </div>

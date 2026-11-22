@@ -4,9 +4,11 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { formatRupees } from '@/lib/format'
 import type { Screen } from '@/lib/types'
 
-const props = withDefaults(defineProps<{ screens: Screen[]; fit?: boolean; height?: string }>(), {
+const props = withDefaults(defineProps<{ screens: Screen[]; fit?: boolean; height?: string; highlight?: string | null; rounded?: string }>(), {
   fit: true,
   height: 'h-80 sm:h-[420px]',
+  highlight: null,
+  rounded: 'rounded-2xl',
 })
 const emit = defineEmits<{ select: [id: string]; moved: [bbox: string] }>()
 
@@ -18,16 +20,31 @@ let fitted = false
 // Leaflet draws on a canvas/SVG layer, so it needs real colours rather than token names.
 const css = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim()
 
+const markers = new Map<string, L.CircleMarker>()
+
+/** The hovered screen's pin grows and turns coral. */
+function paint() {
+  const plum = css('--color-plum-700') || '#6c39a9'
+  const coral = css('--color-coral') || '#f45d48'
+  for (const [id, m] of markers) {
+    const on = id === props.highlight
+    m.setStyle({ radius: on ? 13 : 9, fillColor: on ? coral : plum, weight: on ? 3 : 2 })
+    if (on) m.bringToFront()
+  }
+}
+
 function draw() {
   if (!map || !layer) return
   layer.clearLayers()
-  const plum = css('--color-plum-700') || '#6c39a9'
+  markers.clear()
   for (const s of props.screens) {
-    L.circleMarker([s.lat, s.lng], { radius: 9, color: '#fff', weight: 2, fillColor: plum, fillOpacity: 0.95 })
+    const m = L.circleMarker([s.lat, s.lng], { radius: 9, color: '#fff', weight: 2, fillOpacity: 0.95 })
       .bindTooltip(`<strong>${escapeHtml(s.name)}</strong><br>${formatRupees(s.price_per_play)} per play`)
       .on('click', () => emit('select', s.id))
       .addTo(layer)
+    markers.set(s.id, m)
   }
+  paint()
   // Zoom to the screens once, so the first view shows all of them.
   if (props.fit && !fitted && props.screens.length) {
     fitted = true
@@ -55,9 +72,10 @@ onMounted(() => {
 })
 
 watch(() => props.screens, draw)
+watch(() => props.highlight, paint)
 onBeforeUnmount(() => map?.remove())
 </script>
 
 <template>
-  <div ref="el" class="w-full overflow-hidden rounded-2xl border border-line" :class="height" role="region" aria-label="Map of screens" />
+  <div ref="el" class="w-full overflow-hidden border border-line" :class="[height, rounded]" role="region" aria-label="Map of screens" />
 </template>

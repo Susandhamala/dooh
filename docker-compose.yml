@@ -1,15 +1,30 @@
 name: dooh
 
+# Every long-running service restarts after a crash or reboot and keeps its logs to 50 MB.
+x-service: &service
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: { max-size: 10m, max-file: "5" }
+
+# api, queue and scheduler run the same image, so rebuilding one updates all three.
 x-api: &api
+  <<: *service
+  image: dooh-api:latest
   build: { context: ., dockerfile: infra/docker/api/Dockerfile }
-  env_file: api/.env
+  env_file:
+    - api/.env
+    # Written by infra/ca/lab-ca.sh: the public key devices get when they enrol.
+    - path: infra/ca/out/manifest.env
+      required: false
   depends_on:
     postgres: { condition: service_healthy }
-    redis: { condition: service_started }
+    redis: { condition: service_healthy }
   networks: [backend]
 
 services:
   postgres:
+    <<: *service
     image: postgres:17-alpine
     environment:
       POSTGRES_DB: dooh
@@ -24,25 +39,43 @@ services:
     networks: [backend]
 
   redis:
+    <<: *service
     image: redis:7-alpine
+    # Queued jobs survive a restart.
+    command: redis-server --appendonly yes
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
     networks: [backend]
 
   api:
     <<: *api
     volumes:
       - media:/var/www/api/storage/app
+      # Device CA: signs a player's certificate when it enrols.
+      - ./infra/ca/out/ca.crt:/run/secrets/device_ca.crt:ro
+      - ./infra/ca/out/ca.key:/run/secrets/device_ca.key:ro
 
   queue:
     <<: *api
     command: php artisan queue:work --tries=2 --timeout=900
+    # No PHP-FPM here, so the image's FPM check does not apply.
+    healthcheck: { disable: true }
     volumes:
       - media:/var/www/api/storage/app
 
+  # Also the manifest signer: the only container with the signing key.
   scheduler:
     <<: *api
     command: php artisan schedule:work
+    healthcheck: { disable: true }
+    volumes:
+      - ./infra/ca/out/manifest.key:/run/secrets/manifest_signing_key:ro
 
   web:
+    <<: *service
     build: { context: ., dockerfile: infra/docker/web/Dockerfile }
     ports:
       - "8080:8080"
@@ -52,28 +85,31 @@ services:
       - ./infra/ca/out/server.crt:/etc/nginx/certs/server.crt:ro
       - ./infra/ca/out/server.key:/etc/nginx/certs/server.key:ro
     depends_on: [api]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      interval: 30s
     networks: [backend, devices]
 
-  # Emulated screens for the lab. Start with: make lab
+  # Emulated screen for the lab: logs what it would show instead of drawing it. Enrol it once
+  # with a code from the portal (My screens → Connect device), then start it with: make lab
+  #   docker compose run --rm player-1 enrol --api https://web:8443 --ca /etc/dooh-lab/ca.crt --code XXXX-XXXX
   player-1:
     profiles: [lab]
     build: { context: ., dockerfile: infra/docker/player/Dockerfile }
+    command: ["run"]
+    restart: unless-stopped
     environment:
-      DOOH_API: https://web:8443
-      DOOH_SCREEN_ID: ${LAB_SCREEN_1_ID:-}
-      DOOH_SIGNING_PUBKEY: ${MANIFEST_SIGNING_PUBKEY:-}
-      DOOH_CERT: /etc/dooh/device.crt
-      DOOH_KEY: /etc/dooh/device.key
-      DOOH_CA: /etc/dooh/ca.crt
+      DOOH_DISPLAY: log
     volumes:
-      - ./infra/ca/out/player-1.crt:/etc/dooh/device.crt:ro
-      - ./infra/ca/out/player-1.key:/etc/dooh/device.key:ro
-      - ./infra/ca/out/ca.crt:/etc/dooh/ca.crt:ro
+      - player1:/var/lib/dooh
+      - ./infra/ca/out/ca.crt:/etc/dooh-lab/ca.crt:ro
     networks: [devices]
 
 volumes:
   pgdata:
+  redisdata:
   media:
+  player1:
 
 networks:
   backend:

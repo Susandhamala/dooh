@@ -37,10 +37,16 @@ class ScreenRepository
         return $this->public()->with('contentRules')->where('uuid', $uuid)->first();
     }
 
+    /** Hold the screen row until the transaction ends, so bookings on it are checked one at a time. */
+    public function lock(Screen $screen): void
+    {
+        Screen::query()->whereKey($screen->getKey())->lockForUpdate()->first(['id']);
+    }
+
     /** @return Collection<int, Screen> */
     public function forOrganisation(Organisation $org): Collection
     {
-        return $org->screens()->with('contentRules')->orderBy('name')->get();
+        return $org->screens()->with(['contentRules', 'activeDevice'])->orderBy('name')->get();
     }
 
     public function findForOrganisation(Organisation $org, string $uuid): ?Screen
@@ -58,6 +64,12 @@ class ScreenRepository
         $screen->update($attributes);
 
         return $screen;
+    }
+
+    /** @return array<string, int> status => count */
+    public function countByStatus(): array
+    {
+        return Screen::query()->selectRaw('status, count(*) as n')->groupBy('status')->pluck('n', 'status')->map(fn ($n) => (int) $n)->all();
     }
 
     /** @param  list<string>  $rules */

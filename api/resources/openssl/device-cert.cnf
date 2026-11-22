@@ -1,0 +1,13 @@
+# Extensions for device client certificates the API signs at enrolment.
+# PHP's openssl_csr_sign needs a config file; this one keeps it independent of the system openssl.cnf.
+[req]
+distinguished_name = dn
+
+[dn]
+
+[device_cert]
+basicConstraints = critical, CA:FALSE
+keyUsage = critical, digitalSignature
+extendedKeyUsage = clientAuth
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid

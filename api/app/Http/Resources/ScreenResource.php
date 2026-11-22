@@ -30,6 +30,8 @@ class ScreenResource extends JsonResource
             'audience_notes' => $this->audience_notes,
             'content_rules' => $this->whenLoaded('contentRules', fn () => $this->contentRules->map(fn ($r) => $r->rule->value)->values()),
             'status' => $this->status->value,
+            // Owner views only: the connected player, or null.
+            'device' => $this->whenLoaded('activeDevice', fn () => $this->activeDevice ? new DeviceResource($this->activeDevice) : null),
         ];
     }
 }

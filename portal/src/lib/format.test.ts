@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { daysInRange, formatDate, formatPrice, formatRange, quote, statusMeta } from './format'
+import { daysInRange, formatDate, formatPrice, formatRange, statusMeta } from './format'
 
 describe('format', () => {
   it('formats prices in whole rupees that never wrap', () => {
@@ -20,19 +20,6 @@ describe('format', () => {
     expect(daysInRange('2026-11-02', '2026-11-08')).toBe(7)
     expect(daysInRange('2026-11-02', '2026-11-02')).toBe(1)
     expect(daysInRange('2026-11-08', '2026-11-02')).toBe(0)
-  })
-
-  it('prices a booking exactly like the API: days × hours × plays per hour × price per play', () => {
-    // 3 days, 08:00–10:00, 30 plays an hour at रू 2 → 180 plays, रू 360
-    expect(quote({ days: 3, startHour: 8, endHour: 10, playsPerHour: 30, pricePerPlay: '2.00' })).toEqual({
-      hours: 2,
-      playsPerDay: 60,
-      plays: 180,
-      total: 360,
-    })
-    // paisa stay exact: 7 plays at रू 0.10 is रू 0.70, not 0.7000000001
-    expect(quote({ days: 7, startHour: 9, endHour: 10, playsPerHour: 1, pricePerPlay: '0.10' }).total).toBe(0.7)
-    expect(quote({ days: 1, startHour: 10, endHour: 9, playsPerHour: 30, pricePerPlay: 2 }).plays).toBe(0)
   })
 
   it('labels every status in words', () => {

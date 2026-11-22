@@ -8,6 +8,7 @@ use App\Models\Creative;
 use App\Models\Organisation;
 use App\Models\Screen;
 use Carbon\CarbonImmutable;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 
@@ -31,31 +32,58 @@ class BookingRepository
     }
 
     /**
-     * Slot indexes on $screen already taken on any day in [$start, $end] during any hour in
-     * [$startHour, $endHour).
-     *
-     * @return list<int>
-     */
-    public function takenSlots(Screen $screen, CarbonImmutable $start, CarbonImmutable $end, int $startHour, int $endHour): array
-    {
-        return $this->active($screen)
-            ->whereRaw('date_range && ?::daterange', [Booking::dateRange($start, $end)])
-            ->whereRaw('hour_range && int4range(?, ?)', [$startHour, $endHour])
-            ->distinct()
-            ->pluck('slot_index')
-            ->all();
-    }
-
-    /**
-     * Bookings on $screen that touch [$start, $end], for building the hour-by-hour availability grid.
+     * Bookings on $screen that hold loop time on any day in [$start, $end], oldest first (the order
+     * the loop is packed in).
      *
      * @return Collection<int, Booking>
      */
-    public function overlapping(Screen $screen, CarbonImmutable $start, CarbonImmutable $end): Collection
+    public function activeBetween(Screen $screen, CarbonImmutable $start, CarbonImmutable $end): Collection
     {
         return $this->active($screen)
             ->whereRaw('date_range && ?::daterange', [Booking::dateRange($start, $end)])
-            ->get(['id', 'date_range', 'start_hour', 'end_hour', 'slot_index']);
+            ->orderByRaw('loop_order NULLS LAST, id')
+            ->get(['id', 'date_range', 'start_minute', 'end_minute', 'slot_count', 'repeats', 'loop_order']);
+    }
+
+    /**
+     * Bookings on a screen for one day, with the ad and the advertiser, for the owner's schedule.
+     *
+     * @return Collection<int, Booking>
+     */
+    public function onScreenOn(Screen $screen, CarbonImmutable $day): Collection
+    {
+        return $this->active($screen)
+            ->whereRaw('date_range @> ?::date', [$day->toDateString()])
+            ->with(['creative', 'organisation'])
+            ->orderByRaw('loop_order NULLS LAST, id')
+            ->get();
+    }
+
+    /**
+     * Every booking on the screen that still plays (today or later), in loop order.
+     *
+     * @return Collection<int, Booking>
+     */
+    public function stillPlaying(Screen $screen, CarbonImmutable $today): Collection
+    {
+        return $this->active($screen)
+            ->where('status', '!=', BookingStatus::Completed)
+            ->whereRaw('upper(date_range) > ?::date', [$today->toDateString()])
+            ->orderByRaw('loop_order NULLS LAST, id')
+            ->get();
+    }
+
+    /** Totals for an owner's screens: bookings running, upcoming, and money from plays done. */
+    public function ownerTotals(array $screenIds, CarbonImmutable $today): array
+    {
+        $q = fn () => Booking::query()->whereIn('screen_id', $screenIds);
+
+        return [
+            'live' => $q()->where('status', BookingStatus::Live)->count(),
+            'upcoming' => $q()->where('status', BookingStatus::Scheduled)->count(),
+            'today' => $q()->whereIn('status', [BookingStatus::Scheduled, BookingStatus::Live])->whereRaw('date_range @> ?::date', [$today->toDateString()])->count(),
+            'earned' => (string) ($q()->selectRaw('coalesce(sum(plays_done * price_per_play), 0) as s')->value('s') ?? 0),
+        ];
     }
 
     public function create(array $attributes): Booking
@@ -71,27 +99,21 @@ class BookingRepository
     }
 
     /** @return Collection<int, Booking> */
-    public function waitingOnCreative(Creative $creative): Collection
-    {
-        return $creative->bookings()->where('status', BookingStatus::Checking)->get();
-    }
-
-    /** @return Collection<int, Booking> */
     public function openForCreative(Creative $creative): Collection
     {
-        return $creative->bookings()->whereIn('status', [BookingStatus::Checking, BookingStatus::Scheduled, BookingStatus::Live])->get();
+        return $creative->bookings()->whereIn('status', [BookingStatus::Scheduled, BookingStatus::Live])->get();
     }
 
     /**
-     * Bookings whose status may need to move on by $today: scheduled or live, or still waiting
-     * for review, and starting no later than $today.
+     * Bookings whose status may need to move on by $today: scheduled or live, and starting no
+     * later than $today.
      *
      * @return Collection<int, Booking>
      */
     public function dueForUpdate(CarbonImmutable $today): Collection
     {
         return Booking::query()
-            ->whereIn('status', [BookingStatus::Checking, BookingStatus::Scheduled, BookingStatus::Live])
+            ->whereIn('status', [BookingStatus::Scheduled, BookingStatus::Live])
             ->whereRaw('lower(date_range) <= ?::date', [$today->toDateString()])
             ->get();
     }
@@ -102,13 +124,35 @@ class BookingRepository
         return Booking::query()->where('status', BookingStatus::Live)->get();
     }
 
-    /** Cancel old-style draft holds whose time ran out. Returns how many were released. */
-    public function releaseExpiredHolds(CarbonImmutable $now): int
+    public function findByUuid(string $uuid): ?Booking
+    {
+        return Booking::with(['screen', 'creative', 'organisation'])->where('uuid', $uuid)->first();
+    }
+
+    /** Every booking, newest first, for the admin panel. Search matches the screen or the advertiser. */
+    public function paginateForAdmin(?string $status, ?string $search, int $perPage = 25): LengthAwarePaginator
     {
         return Booking::query()
-            ->where('status', BookingStatus::Draft)
-            ->where('hold_expires_at', '<', $now)
-            ->update(['status' => BookingStatus::Cancelled, 'hold_expires_at' => null, 'updated_at' => $now]);
+            ->with(['screen', 'creative', 'organisation'])
+            ->when($status === 'active', fn ($q) => $q->whereIn('status', [BookingStatus::Scheduled, BookingStatus::Live]))
+            ->when($status && $status !== 'active', fn ($q) => $q->where('status', $status))
+            ->when($search, fn ($q) => $q->where(fn ($w) => $w
+                ->whereHas('screen', fn ($s) => $s->where('name', 'ilike', "%{$search}%"))
+                ->orWhereHas('organisation', fn ($o) => $o->where('name', 'ilike', "%{$search}%"))))
+            ->latest('id')
+            ->paginate($perPage);
+    }
+
+    /** @return array<string, int> status => count */
+    public function countByStatus(): array
+    {
+        return Booking::query()->selectRaw('status, count(*) as n')->groupBy('status')->pluck('n', 'status')->map(fn ($n) => (int) $n)->all();
+    }
+
+    /** @return Collection<int, Booking> */
+    public function latest(int $n): Collection
+    {
+        return Booking::with(['screen', 'creative', 'organisation'])->latest('id')->limit($n)->get();
     }
 
     private function active(Screen $screen): Builder

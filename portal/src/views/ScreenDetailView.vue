@@ -1,15 +1,18 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import HourGrid from '@/components/HourGrid.vue'
+import DayStrip, { type DayCell } from '@/components/booking/DayStrip.vue'
+import LoopBar from '@/components/booking/LoopBar.vue'
+import TimeBar, { type HourCell } from '@/components/booking/TimeBar.vue'
 import ScreenMap from '@/components/ScreenMap.vue'
 import AlertBox from '@/components/ui/AlertBox.vue'
 import AppIcon from '@/components/ui/AppIcon.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import PageHeader from '@/components/ui/PageHeader.vue'
-import { isoDay } from '@/lib/dates'
-import { daysInRange, formatHour, formatHours, formatRupees, quote } from '@/lib/format'
+import { daysInRange, formatRange, formatRupees } from '@/lib/format'
+import { nepalDay, nepalNow, slotsFor } from '@/lib/hours'
 import { errorMessage, fieldErrors, gateNeeded, get, post } from '@/lib/http'
+import { clock, duration, loopStarts, quote, toMinutes, toTime } from '@/lib/schedule'
 import { CATEGORIES, CONTENT_RULES, type Availability, type Booking, type Creative, type Screen } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth'
 import { useWalletStore } from '@/stores/wallet'
@@ -19,88 +22,135 @@ const auth = useAuthStore()
 const wallets = useWalletStore()
 const router = useRouter()
 
+/** Days shown in the strip, from today. */
+const STRIP_DAYS = 28
+const REPEATS = [1, 2, 3]
+
 const screen = ref<Screen | null>(null)
 const loading = ref(true)
 const error = ref<string | null>(null)
 
-const range = ref({ start: isoDay(1), end: isoDay(7) })
-const hours = ref({ start: 8, end: 10 })
 const grid = ref<Availability | null>(null)
-const gridLoading = ref(false)
-const gridError = ref<string | null>(null)
+const range = ref({ start: nepalDay(1), end: nepalDay(7) })
+/** Minutes after midnight, [start, end). */
+const win = ref({ start: 8 * 60, end: 10 * 60 })
+/** Times the ad plays in every loop. */
+const repeats = ref(1)
 
 const ads = ref<Creative[]>([])
 const adId = ref('')
 const busy = ref(false)
 const bookError = ref<string | null>(null)
-const blocker = ref<'terms' | 'document' | 'money' | null>(null)
 
 const BLOCKS: Record<string, string> = { no_alcohol: 'alcohol', no_tobacco: 'tobacco', no_political: 'political', no_religious: 'religious', no_gambling: 'gambling' }
 
-const rangeValid = computed(() => range.value.end >= range.value.start && daysInRange(range.value.start, range.value.end) <= 92)
-const hoursValid = computed(() => hours.value.end > hours.value.start)
-const days = computed(() => (rangeValid.value ? daysInRange(range.value.start, range.value.end) : 0))
+const hoursOn = computed(() => {
+  const s = screen.value
+  if (!s) return { open: 0, close: 1440 }
+  const close = toMinutes(s.closes_at)
+  return { open: toMinutes(s.opens_at), close: close === 0 ? 1440 : close }
+})
+const days = computed(() => daysInRange(range.value.start, range.value.end))
+const chosen = computed(() => ads.value.find((a) => a.id === adId.value))
+/** Slots one play of the chosen ad takes (a longer video takes several). */
+const need = computed(() => (screen.value && chosen.value ? slotsFor(chosen.value, screen.value.spot_seconds) : 1))
+/** Slots the booking takes in every loop. */
+const takes = computed(() => need.value * repeats.value)
+const now = ref(nepalNow())
+
+/** Free slots in each bookable hour of a day: hour → free. */
+function freeOn(date: string): Map<number, number> {
+  const g = grid.value
+  const out = new Map<number, number>()
+  g?.hours.forEach((h, i) => out.set(h, g.days[date]?.[i] ?? g.slots_per_loop))
+  return out
+}
+const hoursOfWindow = computed(() => {
+  const out: number[] = []
+  for (let h = Math.floor(win.value.start / 60); h * 60 < win.value.end; h++) out.push(h)
+  return out
+})
+const state = (frees: number[]) =>
+  frees.some((f) => f < takes.value) ? ('full' as const) : frees.some((f) => f < (grid.value?.slots_per_loop ?? 0)) ? ('busy' as const) : ('free' as const)
+
+const dayCells = computed<DayCell[]>(() =>
+  Array.from({ length: STRIP_DAYS }, (_, i) => {
+    const date = nepalDay(i)
+    if (date < now.value.day || (date === now.value.day && win.value.start <= now.value.minute)) return { date, state: 'past' as const }
+    const row = freeOn(date)
+    return { date, state: state(hoursOfWindow.value.map((h) => row.get(h)).filter((f): f is number => f !== undefined)) }
+  }),
+)
+const selectedDates = computed(() => dayCells.value.map((d) => d.date).filter((d) => d >= range.value.start && d <= range.value.end))
+const hourCells = computed<HourCell[]>(() => {
+  const { open, close } = hoursOn.value
+  const rows = selectedDates.value.map(freeOn)
+  const out: HourCell[] = []
+  for (let h = Math.floor(open / 60); h * 60 < close; h++) {
+    const past = range.value.start === now.value.day && (h + 1) * 60 <= now.value.minute
+    out.push({ hour: h, state: past ? 'past' : state(rows.map((r) => r.get(h)).filter((f): f is number => f !== undefined)) })
+  }
+  return out
+})
+/** Slots already booked in the busiest hour of the chosen time (what the loop preview shows). */
+const usedNow = computed(() => {
+  const slots = grid.value?.slots_per_loop ?? 0
+  let used = 0
+  for (const r of selectedDates.value.map(freeOn)) for (const h of hoursOfWindow.value) used = Math.max(used, slots - (r.get(h) ?? slots))
+  return used
+})
+const fits = computed(() => usedNow.value + takes.value <= (grid.value?.slots_per_loop ?? 0))
+
+const loops = computed(() => (screen.value ? loopStarts(screen.value.loop_seconds, win.value.start, win.value.end) : []))
 const cost = computed(() =>
   screen.value
-    ? quote({ days: days.value, startHour: hours.value.start, endHour: hours.value.end, playsPerHour: screen.value.plays_per_hour, pricePerPlay: screen.value.price_per_play })
-    : { hours: 0, playsPerDay: 0, plays: 0, total: 0 },
+    ? quote({ days: days.value, loopsPerDay: loops.value.length, repeats: repeats.value, pricePerPlay: screen.value.price_per_play, slots: need.value })
+    : { plays: 0, perPlay: 0, total: 0 },
 )
-const available = computed(() => Number(wallets.wallet?.available ?? 0))
-const shortBy = computed(() => Math.max(0, cost.value.total - available.value))
+const balance = computed(() => Number(wallets.wallet?.available ?? 0))
+const shortBy = computed(() => Math.max(0, cost.value.total - balance.value))
+const verified = computed(() => auth.user?.document_status === 'approved')
+const startsPast = computed(() => range.value.start < now.value.day || (range.value.start === now.value.day && win.value.start <= now.value.minute))
 
-/** Lowest free slot count in the chosen hours across the chosen days. */
-const minFree = computed(() => {
-  if (!grid.value) return null
-  const idx = grid.value.hours.map((h, i) => (h >= hours.value.start && h < hours.value.end ? i : -1)).filter((i) => i >= 0)
-  const all = Object.values(grid.value.days).flatMap((row) => idx.map((i) => row[i] ?? 0))
-  return all.length ? Math.min(...all) : 0
-})
-
-const hourOptions = computed(() => {
-  const [open, close] = screen.value?.bookable_hours ?? [0, 24]
-  return Array.from({ length: close - open + 1 }, (_, i) => open + i)
-})
-
-/** Why an ad can't go on this screen, or null if it can. */
-function unfit(a: Creative): string | null {
+/** Why this ad can't play on this screen, or null when it fits. Mirrors the API's checks. */
+function misfit(a: Creative): string | null {
   const s = screen.value
-  if (!s) return null
-  if (a.status === 'processing') return 'Still being checked'
-  if (a.status === 'failed') return 'File problem: see My ads'
-  if (a.status === 'rejected') return 'Refused by review'
-  if (Math.abs(a.width_px / a.height_px - s.width_px / s.height_px) > 0.01) return `Wrong shape (${a.orientation})`
-  if (a.kind === 'video' && (a.duration_s ?? 0) > s.spot_seconds + 0.5) return `Longer than ${s.spot_seconds} s`
-  if (s.content_rules?.some((r) => BLOCKS[r] === a.category)) return `${CATEGORIES[a.category]} not allowed here`
+  if (!s) return 'Loading the screen…'
+  if (Math.abs(a.width_px / a.height_px - s.width_px / s.height_px) > 0.01) {
+    return `Wrong shape: this ad is ${a.width_px}×${a.height_px}, the screen needs ${s.orientation} ${s.width_px}×${s.height_px}.`
+  }
+  if (slotsFor(a, s.spot_seconds) > s.slots_per_loop) {
+    return `Too long: this video is ${Math.round(a.duration_s ?? 0)} s, the screen’s whole loop is ${s.loop_seconds} s.`
+  }
+  if (s.content_rules?.some((r) => BLOCKS[r] === a.category)) return `This screen doesn’t show ${CATEGORIES[a.category] ?? a.category} ads.`
   return null
 }
-const fitting = computed(() => ads.value.filter((a) => !unfit(a)))
-const chosenAd = computed(() => ads.value.find((a) => a.id === adId.value) ?? null)
+const pending = (a: Creative) => a.status === 'in_review' || a.status === 'processing'
+/** Every approved ad, plus ones still being checked; the ones that can't be booked here say why. */
+const choices = computed(() =>
+  ads.value
+    .filter((a) => a.status === 'approved' || pending(a))
+    .map((a) => ({ ad: a, why: pending(a) ? 'Being checked by our team. You can book it once approved.' : misfit(a) }))
+    .sort((x, y) => Number(!!x.why) - Number(!!y.why)),
+)
+const bookable = computed(() => choices.value.filter((c) => !c.why).map((c) => c.ad))
 
 const canBook = computed(
-  () => auth.isLoggedIn && !!chosenAd.value && rangeValid.value && hoursValid.value && (minFree.value ?? 0) > 0 && shortBy.value === 0 && !gridLoading.value,
+  () =>
+    auth.isLoggedIn && verified.value && !!adId.value && days.value > 0 && fits.value && loops.value.length > 0 && !startsPast.value && shortBy.value === 0,
 )
 
-function pickHour(h: number) {
-  // First click starts a new window of one hour; a click after it extends the window to that hour.
-  if (h >= hours.value.start && h < hours.value.end && hours.value.end - hours.value.start === 1) return
-  if (h > hours.value.start && hours.value.end - hours.value.start === 1) hours.value.end = h + 1
-  else hours.value = { start: h, end: h + 1 }
+/** Start on the first open stretch from 08:00 (two hours), within the screen's on time. */
+function suggestTime() {
+  const { open, close } = hoursOn.value
+  const ok = (h: HourCell) => h.state === 'free' || h.state === 'busy'
+  const first = hourCells.value.find((h) => ok(h) && h.hour >= 8) ?? hourCells.value.find(ok)
+  const start = Math.max(open, (first?.hour ?? 8) * 60)
+  win.value = { start, end: Math.min(close, start + 120) }
 }
 
-let seq = 0
 async function loadGrid() {
-  if (!rangeValid.value) return
-  const mine = ++seq
-  gridLoading.value = true
-  gridError.value = null
-  try {
-    const res = await get<Availability>(`/screens/${props.id}/availability`, { from: range.value.start, to: range.value.end })
-    if (mine === seq) grid.value = res.data
-  } catch (err) {
-    if (mine === seq) gridError.value = errorMessage(err)
-  } finally {
-    if (mine === seq) gridLoading.value = false
-  }
+  grid.value = (await get<Availability>(`/screens/${props.id}/availability`, { from: nepalDay(0), to: nepalDay(STRIP_DAYS - 1) })).data
 }
 
 async function load() {
@@ -109,16 +159,15 @@ async function load() {
   try {
     screen.value = (await get<Screen>(`/screens/${props.id}`)).data
     document.title = `${screen.value.name} · Screen Ads`
-    const [open, close] = screen.value.bookable_hours
-    hours.value = { start: Math.min(Math.max(open, 8), close - 1), end: Math.min(Math.max(open, 8) + 2, close) }
     await loadGrid()
     if (auth.isLoggedIn) {
-      await wallets.load()
+      await Promise.all([auth.reloadMe(), wallets.load()])
       if (wallets.orgId) {
         ads.value = (await get<Creative[]>(`/orgs/${wallets.orgId}/creatives`)).data
-        adId.value = fitting.value.find((a) => a.status === 'approved')?.id ?? fitting.value[0]?.id ?? ''
+        adId.value = bookable.value[0]?.id ?? ''
       }
     }
+    suggestTime()
   } catch (err) {
     error.value = errorMessage(err)
   } finally {
@@ -130,41 +179,42 @@ async function book() {
   if (!wallets.orgId || !canBook.value) return
   busy.value = true
   bookError.value = null
-  blocker.value = null
   try {
     await post<Booking>(`/orgs/${wallets.orgId}/bookings`, {
       screen_id: props.id,
       creative_id: adId.value,
       start_date: range.value.start,
       end_date: range.value.end,
-      start_hour: hours.value.start,
-      end_hour: hours.value.end,
+      start_time: toTime(win.value.start),
+      end_time: toTime(win.value.end),
+      repeats: repeats.value,
     })
     await wallets.load()
     router.push({ name: 'bookings' })
   } catch (err) {
     const gate = gateNeeded(err)
     const status = (err as { response?: { status?: number } }).response?.status
-    if (gate) blocker.value = gate
-    else if (status === 402) blocker.value = 'money'
+    if (gate === 'terms') router.push({ name: 'welcome', query: { next: `/screens/${props.id}` } })
+    else if (gate === 'document') await auth.reloadMe()
+    else if (status === 402) await wallets.load()
     else {
       const f = fieldErrors(err)
-      bookError.value = f.creative_id ?? f.start_hour ?? f.start_date ?? errorMessage(err)
+      bookError.value = f.creative_id ?? f.repeats ?? f.start_time ?? f.end_time ?? f.start_date ?? errorMessage(err)
     }
-    if (status === 409) loadGrid()
+    // Someone paid for that time first: show the new picture.
+    if (status === 409) await loadGrid()
   } finally {
     busy.value = false
   }
 }
 
 onMounted(load)
-watch(range, loadGrid, { deep: true })
-watch(
-  () => hours.value.start,
-  (s) => {
-    if (hours.value.end <= s) hours.value.end = s + 1
-  },
-)
+const clockTimer = setInterval(() => (now.value = nepalNow()), 30_000)
+onBeforeUnmount(() => clearInterval(clockTimer))
+
+const loopsPerHour = computed(() => (screen.value ? Math.floor(3600 / screen.value.loop_seconds) : 0))
+const perDayAllDay = computed(() => (screen.value ? Number(screen.value.price_per_play) * screen.value.plays_per_hour * 16 : 0))
+const timesWord = (n: number) => (n === 1 ? 'Once' : n === 2 ? 'Twice' : `${n} times`)
 </script>
 
 <template>
@@ -172,8 +222,8 @@ watch(
     <div v-if="loading" aria-busy="true" aria-label="Loading screen">
       <div class="skeleton h-4 w-24" />
       <div class="skeleton mt-4 h-9 w-2/3 max-w-md" />
-      <div class="mt-8 grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[minmax(0,1fr)_420px]">
-        <div class="skeleton h-72" />
+      <div class="mt-8 grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[minmax(0,1fr)_400px]">
+        <div class="skeleton h-[32rem]" />
         <div class="skeleton h-96" />
       </div>
     </div>
@@ -190,51 +240,197 @@ watch(
         </template>
       </PageHeader>
 
-      <div class="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[minmax(0,1fr)_420px] lg:items-start">
-        <div class="min-w-0 space-y-6">
-          <div class="card grid gap-6 p-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] sm:p-6">
-            <div class="grid place-items-center rounded-xl bg-plum-950 p-5">
-              <div
-                class="grid place-items-center rounded-md bg-gradient-to-br from-plum-700 to-navy text-center text-white"
-                :class="screen.height_px > screen.width_px ? 'h-56 w-auto' : 'w-full'"
-                :style="{ aspectRatio: `${screen.width_px} / ${screen.height_px}` }"
-              >
-                <span class="px-2 text-xs font-bold tracking-wide text-white/80">{{ screen.width_px }} × {{ screen.height_px }}</span>
+      <div class="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[minmax(0,1fr)_400px] lg:items-start">
+        <!-- Plan -->
+        <section class="card min-w-0 p-5 sm:p-6 lg:col-start-1" aria-labelledby="plan-h">
+          <h2 id="plan-h" class="h-section">Book this screen</h2>
+          <p class="mt-1 text-sm text-muted">
+            Ads take turns in a {{ duration(screen.loop_seconds) }} loop, {{ loopsPerHour }} times an hour. Choose your ad, the days and a time that is still
+            open.
+          </p>
+
+          <!-- 1. Ad -->
+          <div class="mt-6">
+            <h3 class="field-label"><span class="text-plum-700">1.</span> Your ad</h3>
+            <template v-if="auth.isLoggedIn">
+              <div v-if="choices.length" class="grid gap-2 sm:grid-cols-2">
+                <label
+                  v-for="{ ad: a, why } in choices"
+                  :key="a.id"
+                  class="flex items-center gap-3 rounded-xl border p-2 transition has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-plum-700"
+                  :class="
+                    why
+                      ? 'cursor-not-allowed border-dashed border-line-strong bg-canvas'
+                      : adId === a.id
+                        ? 'cursor-pointer border-plum-700 bg-plum-50'
+                        : 'cursor-pointer border-line-strong hover:border-plum-300'
+                  "
+                >
+                  <input v-model="adId" type="radio" name="ad" :value="a.id" :disabled="!!why" class="sr-only" />
+                  <span class="relative grid h-10 w-16 shrink-0 place-items-center overflow-hidden rounded-md bg-plum-950 text-white/70" :class="{ 'opacity-50': why }">
+                    <img v-if="a.thumb_url" :src="a.thumb_url" alt="" class="h-full w-full object-cover" />
+                    <AppIcon v-else :name="a.kind === 'video' ? 'film' : 'image'" :size="16" />
+                    <span v-if="a.kind === 'video'" class="absolute right-0.5 bottom-0.5 rounded bg-black/70 px-1 text-[10px] leading-4 font-bold text-white">
+                      {{ Math.round(a.duration_s ?? 0) }}s
+                    </span>
+                  </span>
+                  <span class="min-w-0 flex-1">
+                    <span class="block truncate text-sm font-bold" :class="{ 'text-muted': why }">{{ a.name }}</span>
+                    <span v-if="why" class="block text-xs font-medium text-danger">{{ why }}</span>
+                    <span v-else class="block text-xs text-subtle">{{ a.kind === 'video' ? 'Video' : 'Image' }} · {{ slotsFor(a, screen.spot_seconds) * screen.spot_seconds }}&nbsp;s a play</span>
+                  </span>
+                  <AppIcon v-if="!why && adId === a.id" name="check" :size="18" class="shrink-0 text-plum-700" />
+                </label>
+              </div>
+              <div v-else class="rounded-xl border border-dashed border-line-strong p-4 text-center text-sm text-muted">
+                Upload an ad first. Our team approves it, then you can book.
+                <RouterLink to="/ads" class="btn-outline btn-sm mt-3">Upload ad</RouterLink>
+              </div>
+              <p v-if="choices.length && !bookable.length" class="field-hint">
+                None of your ads can play here yet. Upload a {{ screen.orientation }} {{ screen.width_px }}×{{ screen.height_px }} version, videos up to
+                {{ screen.loop_seconds }}&nbsp;s. <RouterLink to="/ads" class="link">Upload ad</RouterLink>
+              </p>
+            </template>
+            <p v-else class="text-sm text-muted">
+              <RouterLink :to="{ name: 'login', query: { next: `/screens/${id}` } }" class="link">Sign in</RouterLink> to choose one of your approved ads. You can look around
+              first.
+            </p>
+
+            <div class="mt-4">
+              <p class="text-xs font-semibold text-subtle">Plays in every loop</p>
+              <div class="mt-1.5 inline-flex rounded-xl border border-line-strong p-1" role="radiogroup" aria-label="Plays in every loop">
+                <button
+                  v-for="n in REPEATS"
+                  :key="n"
+                  type="button"
+                  role="radio"
+                  :aria-checked="repeats === n"
+                  class="rounded-lg px-3.5 py-1.5 text-sm font-bold transition"
+                  :class="repeats === n ? 'bg-plum-700 text-white shadow-sm' : 'text-body hover:bg-plum-50'"
+                  @click="repeats = n"
+                >
+                  {{ timesWord(n) }}
+                </button>
               </div>
             </div>
-            <dl class="grid grid-cols-2 content-center gap-4 text-sm">
-              <div><dt class="text-subtle">Price per play</dt><dd class="price text-lg">{{ formatRupees(screen.price_per_play) }}</dd></div>
-              <div><dt class="text-subtle">Plays per hour</dt><dd class="font-bold">{{ screen.plays_per_hour }}</dd></div>
-              <div><dt class="text-subtle">On air</dt><dd class="font-bold">{{ screen.opens_at }}–{{ screen.closes_at }}</dd></div>
-              <div><dt class="text-subtle">Ad length</dt><dd class="font-bold">up to {{ screen.spot_seconds }} s</dd></div>
-              <div><dt class="text-subtle">Shape</dt><dd class="font-bold capitalize">{{ screen.orientation }}</dd></div>
-              <div><dt class="text-subtle">Advertisers at once</dt><dd class="font-bold">{{ screen.slots_per_loop }}</dd></div>
+          </div>
+
+          <!-- 2. Days -->
+          <div class="mt-7">
+            <div class="flex flex-wrap items-baseline justify-between gap-2">
+              <h3 class="field-label"><span class="text-plum-700">2.</span> Days</h3>
+              <span class="text-sm font-semibold text-plum-900">{{ formatRange(range.start, range.end) }} · {{ days }} {{ days === 1 ? 'day' : 'days' }}</span>
+            </div>
+            <DayStrip :days="dayCells" :start="range.start" :end="range.end" @pick="range = $event" />
+            <p class="field-hint">Tap a day to start, then a later day to end. Same time every day.</p>
+          </div>
+
+          <!-- 3. Time -->
+          <div class="mt-7">
+            <h3 class="field-label"><span class="text-plum-700">3.</span> Time</h3>
+            <div class="pt-7">
+              <TimeBar :open="hoursOn.open" :close="hoursOn.close" :hours="hourCells" :start="win.start" :end="win.end" @change="win = $event" />
+            </div>
+          </div>
+        </section>
+
+        <!-- Summary -->
+        <aside class="card p-5 shadow-card sm:p-6 lg:sticky lg:top-24 lg:col-start-2 lg:row-span-2 lg:row-start-1" aria-labelledby="sum-h">
+          <h2 id="sum-h" class="h-section">Your ad will run</h2>
+          <ul class="mt-4 space-y-3 text-sm">
+            <li class="flex gap-3">
+              <AppIcon name="calendar" :size="18" class="mt-0.5 shrink-0 text-plum-700" />
+              <span><strong class="text-ink">{{ formatRange(range.start, range.end) }}</strong><span class="block text-subtle">{{ days }} {{ days === 1 ? 'day' : 'days' }}</span></span>
+            </li>
+            <li class="flex gap-3">
+              <AppIcon name="clock" :size="18" class="mt-0.5 shrink-0 text-plum-700" />
+              <span><strong class="text-ink">{{ toTime(win.start) }}–{{ toTime(win.end) }}</strong> every day<span class="block text-subtle">Nepal time</span></span>
+            </li>
+            <li class="flex gap-3">
+              <AppIcon name="play" :size="18" class="mt-0.5 shrink-0 text-plum-700" />
+              <span>
+                <strong class="text-ink">{{ timesWord(repeats) }}</strong> in every {{ duration(screen.loop_seconds) }} loop
+                <span class="block text-subtle">{{ need * screen.spot_seconds }}&nbsp;s a play · {{ cost.plays.toLocaleString('en-IN') }} plays in total</span>
+              </span>
+            </li>
+          </ul>
+
+          <div class="mt-4">
+            <LoopBar :loop="screen.loop_seconds" :spot="screen.spot_seconds" :slots="screen.slots_per_loop" :used="usedNow" :need="need" :repeats="repeats" />
+            <p v-if="fits" class="mt-2 text-xs text-subtle">
+              The screen lines ads up with no gaps, so your ad goes into the free time in every loop. Loops start at
+              <span class="font-semibold text-ink [font-variant-numeric:tabular-nums]">{{ loops.slice(0, 3).map(clock).join(', ') }}</span><template v-if="loops.length > 3"> …
+                <span class="font-semibold text-ink [font-variant-numeric:tabular-nums]">{{ clock(loops[loops.length - 1]!) }}</span></template>.
+            </p>
+            <p v-else class="mt-2 text-sm font-semibold text-danger">
+              Not enough free time at {{ toTime(win.start) }}–{{ toTime(win.end) }} on all these days. Tap an available time, fewer plays per loop or other days.
+            </p>
+          </div>
+
+          <div class="mt-4 rounded-xl bg-canvas p-4">
+            <div class="flex items-baseline justify-between gap-3">
+              <span class="font-bold">Total</span>
+              <span class="price text-2xl">{{ formatRupees(cost.total) }}</span>
+            </div>
+            <p class="mt-1 text-xs text-subtle">
+              {{ cost.plays.toLocaleString('en-IN') }} plays × {{ formatRupees(cost.perPlay) }}<template v-if="need > 1"> ({{ need }} slots of {{ formatRupees(screen.price_per_play) }})</template>
+            </p>
+            <p v-if="auth.isLoggedIn && wallets.wallet" class="mt-2 flex justify-between gap-3 border-t border-line pt-2 text-xs">
+              <span class="text-subtle">Your balance</span>
+              <span class="font-bold">{{ formatRupees(balance) }}</span>
+            </p>
+          </div>
+
+          <div class="mt-4 space-y-3">
+            <RouterLink v-if="!auth.isLoggedIn" :to="{ name: 'login', query: { next: `/screens/${id}` } }" class="btn-primary w-full">Sign in to book</RouterLink>
+            <template v-else>
+              <AlertBox v-if="!verified" tone="warning" :title="auth.user?.document_status === 'pending' ? 'Your identity is being checked' : 'Verify your identity first'">
+                {{ auth.user?.document_status === 'pending' ? 'You can book as soon as our team verifies your document.' : 'Upload your citizenship, passport or company papers. It takes a minute.' }}
+                <template v-if="auth.user?.document_status !== 'pending'" #action><RouterLink to="/verification" class="link shrink-0 text-sm">Upload</RouterLink></template>
+              </AlertBox>
+              <AlertBox v-else-if="shortBy > 0" tone="warning" title="Not enough balance">
+                Load {{ formatRupees(Math.ceil(shortBy)) }} more to book this.
+                <template #action><RouterLink to="/wallet" class="link shrink-0 text-sm">Load money</RouterLink></template>
+              </AlertBox>
+              <AlertBox v-if="startsPast" tone="warning">That time has already passed today. Pick a later time or start tomorrow.</AlertBox>
+              <AlertBox v-if="bookError">{{ bookError }}</AlertBox>
+              <button type="button" class="btn-primary w-full" :disabled="!canBook || busy" @click="book">
+                {{ busy ? 'Paying…' : `Pay ${formatRupees(cost.total)} and book` }}
+              </button>
+              <p class="text-center text-xs text-subtle">Paid from your wallet. Cancel any time: plays that haven’t happened are refunded.</p>
+            </template>
+          </div>
+        </aside>
+
+        <!-- About the screen -->
+        <div class="min-w-0 space-y-6 lg:col-start-1">
+          <div class="card overflow-hidden">
+            <ScreenMap :screens="[screen]" height="h-56" />
+            <dl class="grid grid-cols-2 gap-4 p-5 text-sm sm:grid-cols-4 sm:p-6">
+              <div>
+                <dt class="text-subtle">Price</dt>
+                <dd class="price text-lg">{{ formatRupees(screen.price_per_play) }}</dd>
+                <dd class="text-xs text-subtle">per {{ screen.spot_seconds }}&nbsp;s play</dd>
+              </div>
+              <div>
+                <dt class="text-subtle">Plays per hour</dt>
+                <dd class="text-lg font-bold">{{ screen.plays_per_hour }}</dd>
+                <dd class="text-xs text-subtle">once every {{ duration(screen.loop_seconds) }}</dd>
+              </div>
+              <div>
+                <dt class="text-subtle">On air</dt>
+                <dd class="text-lg font-bold">{{ screen.opens_at }}–{{ screen.closes_at }}</dd>
+                <dd class="text-xs text-subtle">≈ {{ formatRupees(Math.round(perDayAllDay)) }} for 16 h</dd>
+              </div>
+              <div>
+                <dt class="text-subtle">Your ad must be</dt>
+                <dd class="font-bold capitalize">{{ screen.orientation }} · {{ screen.width_px }}×{{ screen.height_px }}</dd>
+                <dd class="text-xs text-subtle">any length up to {{ screen.loop_seconds }}&nbsp;s</dd>
+              </div>
             </dl>
           </div>
 
-          <!-- Availability -->
-          <section class="card p-5 sm:p-6" aria-labelledby="avail-h">
-            <div class="flex flex-wrap items-baseline justify-between gap-2">
-              <h2 id="avail-h" class="h-section">Free slots by hour</h2>
-              <span v-if="gridLoading" class="text-xs text-subtle">Updating…</span>
-            </div>
-            <p class="mt-1 text-sm text-muted">Each number is how many more advertisers that hour can take. Click an hour to start, another to end.</p>
-            <AlertBox v-if="gridError" class="mt-4">{{ gridError }}</AlertBox>
-            <HourGrid
-              v-else-if="grid && grid.hours.length"
-              class="mt-4"
-              :class="{ 'opacity-60': gridLoading }"
-              :availability="grid"
-              :start="hours.start"
-              :end="hours.end"
-              :slots="screen.slots_per_loop"
-              @pick="pickHour"
-            />
-            <p v-else-if="grid" class="mt-4 text-sm text-muted">This screen has no bookable hours.</p>
-            <div v-else class="skeleton mt-4 h-48" />
-          </section>
-
-          <div v-if="screen.description || screen.audience_notes" class="card space-y-4 p-5 sm:p-6">
+          <div class="card space-y-5 p-5 sm:p-6">
             <div v-if="screen.description">
               <h2 class="h-section">About this screen</h2>
               <p class="mt-2 text-[15px] whitespace-pre-line text-body">{{ screen.description }}</p>
@@ -243,120 +439,15 @@ watch(
               <h2 class="h-section">Who sees it</h2>
               <p class="mt-2 text-[15px] whitespace-pre-line text-body">{{ screen.audience_notes }}</p>
             </div>
+            <div>
+              <h2 class="h-section">Not shown on this screen</h2>
+              <ul v-if="screen.content_rules?.length" class="mt-3 flex flex-wrap gap-2">
+                <li v-for="r in screen.content_rules" :key="r" class="badge bg-danger/8 text-danger"><AppIcon name="x" :size="14" /> {{ CONTENT_RULES[r] ?? r }}</li>
+              </ul>
+              <p v-else class="mt-2 text-sm text-muted">No extra rules beyond our content policy.</p>
+            </div>
           </div>
-
-          <div class="card p-5 sm:p-6">
-            <h2 class="h-section">Content rules</h2>
-            <p class="mt-1 text-sm text-muted">On top of our content policy, this screen doesn’t show:</p>
-            <ul v-if="screen.content_rules?.length" class="mt-3 flex flex-wrap gap-2">
-              <li v-for="r in screen.content_rules" :key="r" class="badge bg-danger/8 text-danger"><AppIcon name="x" :size="14" /> {{ CONTENT_RULES[r] ?? r }}</li>
-            </ul>
-            <p v-else class="mt-3 text-sm font-semibold text-success">No extra rules.</p>
-          </div>
-
-          <ScreenMap :screens="[screen]" height="h-64" />
         </div>
-
-        <!-- Booking -->
-        <aside class="card p-5 shadow-card sm:p-6 lg:sticky lg:top-24" aria-labelledby="book-h">
-          <h2 id="book-h" class="h-section">Book this screen</h2>
-
-          <div class="mt-4 grid grid-cols-2 gap-3">
-            <div>
-              <label class="field-label" for="from">From</label>
-              <input id="from" v-model="range.start" type="date" class="input px-3" :min="isoDay(0)" />
-            </div>
-            <div>
-              <label class="field-label" for="to">To</label>
-              <input id="to" v-model="range.end" type="date" class="input px-3" :class="{ 'input-error': !rangeValid }" :min="range.start" :max="isoDay(92)" />
-            </div>
-            <div>
-              <label class="field-label" for="h-from">Start hour</label>
-              <select id="h-from" v-model.number="hours.start" class="input px-3">
-                <option v-for="h in hourOptions.slice(0, -1)" :key="h" :value="h">{{ formatHour(h) }}</option>
-              </select>
-            </div>
-            <div>
-              <label class="field-label" for="h-to">End hour</label>
-              <select id="h-to" v-model.number="hours.end" class="input px-3">
-                <option v-for="h in hourOptions.filter((x) => x > hours.start)" :key="h" :value="h">{{ h === 24 ? '24:00' : formatHour(h) }}</option>
-              </select>
-            </div>
-          </div>
-          <p v-if="!rangeValid" class="field-error">Pick an end date on or after the start, at most 92 days.</p>
-          <p v-else-if="minFree === 0" class="mt-3 text-sm font-semibold text-danger">Those hours are full on at least one day. Try other hours or dates.</p>
-          <p v-else-if="minFree" class="mt-3 text-sm font-semibold text-success">Available: {{ minFree }} of {{ screen.slots_per_loop }} places free in those hours.</p>
-
-          <!-- Your ad -->
-          <div v-if="auth.isLoggedIn" class="mt-5">
-            <span class="field-label">Your ad</span>
-            <div v-if="!ads.length" class="rounded-xl border border-dashed border-line-strong p-4 text-center">
-              <p class="text-sm text-muted">Upload an ad first. It can be booked while it is in review.</p>
-              <RouterLink to="/ads" class="btn-outline btn-sm mt-3">Upload ad</RouterLink>
-            </div>
-            <div v-else class="max-h-56 space-y-2 overflow-y-auto pr-1">
-              <label
-                v-for="a in ads"
-                :key="a.id"
-                class="flex items-center gap-3 rounded-xl border p-2 transition"
-                :class="[
-                  unfit(a) ? 'cursor-not-allowed border-line opacity-55' : 'cursor-pointer has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-plum-700',
-                  adId === a.id ? 'border-plum-700 bg-plum-50' : unfit(a) ? '' : 'border-line-strong hover:border-plum-300',
-                ]"
-              >
-                <input v-model="adId" type="radio" name="ad" :value="a.id" :disabled="!!unfit(a)" class="sr-only" />
-                <span class="grid h-10 w-16 shrink-0 place-items-center overflow-hidden rounded-md bg-plum-950 text-white/70">
-                  <img v-if="a.thumb_url" :src="a.thumb_url" alt="" class="h-full w-full object-cover" />
-                  <AppIcon v-else :name="a.kind === 'video' ? 'film' : 'image'" :size="16" />
-                </span>
-                <span class="min-w-0 flex-1">
-                  <span class="block truncate text-sm font-bold">{{ a.name }}</span>
-                  <span class="block text-xs" :class="unfit(a) ? 'text-danger' : a.status === 'approved' ? 'text-success' : 'text-warning'">
-                    {{ unfit(a) ?? (a.status === 'approved' ? 'Approved' : 'In review: plays after approval') }}
-                  </span>
-                </span>
-              </label>
-            </div>
-          </div>
-
-          <!-- The sum -->
-          <div class="mt-5 rounded-xl bg-canvas p-4 text-sm">
-            <div class="flex justify-between gap-3"><span class="text-muted">Hours each day</span><span class="font-semibold">{{ formatHours(hours.start, hours.end) }} ({{ cost.hours }} h)</span></div>
-            <div class="mt-1.5 flex justify-between gap-3"><span class="text-muted">Plays each day</span><span class="font-semibold">{{ cost.hours }} h × {{ screen.plays_per_hour }} = {{ cost.playsPerDay.toLocaleString('en-IN') }}</span></div>
-            <div class="mt-1.5 flex justify-between gap-3"><span class="text-muted">Total plays</span><span class="font-semibold">{{ days }} days × {{ cost.playsPerDay.toLocaleString('en-IN') }} = {{ cost.plays.toLocaleString('en-IN') }}</span></div>
-            <div class="mt-1.5 flex justify-between gap-3"><span class="text-muted">Price per play</span><span class="font-semibold">{{ formatRupees(screen.price_per_play) }}</span></div>
-            <div class="mt-3 flex items-baseline justify-between gap-3 border-t border-line pt-3">
-              <span class="font-bold">Total</span>
-              <span class="price text-2xl">{{ formatRupees(cost.total) }}</span>
-            </div>
-            <template v-if="auth.isLoggedIn && wallets.wallet">
-              <div class="mt-2 flex justify-between gap-3 text-xs"><span class="text-subtle">Your available balance</span><span class="font-bold">{{ formatRupees(available) }}</span></div>
-              <div v-if="!shortBy" class="mt-1 flex justify-between gap-3 text-xs"><span class="text-subtle">Left after booking</span><span class="font-bold">{{ formatRupees(available - cost.total) }}</span></div>
-            </template>
-          </div>
-          <p class="mt-2 text-xs text-subtle">The total is held from your wallet now. Each play is charged as it happens; unplayed time comes back.</p>
-
-          <div class="mt-5 space-y-3">
-            <RouterLink v-if="!auth.isLoggedIn" :to="{ name: 'login', query: { next: `/screens/${id}` } }" class="btn-primary w-full">Sign in to book</RouterLink>
-            <template v-else>
-              <AlertBox v-if="shortBy > 0 || blocker === 'money'" tone="warning" title="Not enough balance">
-                Load at least {{ formatRupees(Math.ceil(shortBy)) }} more to book this.
-                <template #action><RouterLink to="/wallet" class="link shrink-0 text-sm">Load money</RouterLink></template>
-              </AlertBox>
-              <AlertBox v-if="blocker === 'document'" tone="warning" title="Verify your identity first">
-                Upload your citizenship, passport or company papers. It takes a minute.
-                <template #action><RouterLink to="/verification" class="link shrink-0 text-sm">Upload</RouterLink></template>
-              </AlertBox>
-              <AlertBox v-if="blocker === 'terms'" tone="warning" title="Accept the terms first">
-                <template #action><RouterLink :to="{ name: 'welcome', query: { next: `/screens/${id}` } }" class="link shrink-0 text-sm">Read terms</RouterLink></template>
-              </AlertBox>
-              <AlertBox v-if="bookError">{{ bookError }}</AlertBox>
-              <button type="button" class="btn-primary w-full" :disabled="!canBook || busy" @click="book">
-                {{ busy ? 'Booking…' : `Book for ${formatRupees(cost.total)}` }}
-              </button>
-            </template>
-          </div>
-        </aside>
       </div>
     </template>
   </div>

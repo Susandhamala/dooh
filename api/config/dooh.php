@@ -1,15 +1,35 @@
 <?php
 
+// Lab shortcuts (password login, codes on screen, fake plays) can never switch on in production,
+// whatever the .env says.
+$lab = env('APP_ENV') !== 'production';
+
 return [
     'rentall' => [
         'base_url' => env('RENTALL_BASE_URL', 'https://rentallnepal.com'),
         'sso_client_secret' => env('RENTALL_SSO_CLIENT_SECRET'),
     ],
 
-    'lab_local_login' => (bool) env('LAB_LOCAL_LOGIN', false),
+    'lab_local_login' => $lab && (bool) env('LAB_LOCAL_LOGIN', false),
+
+    // Screen owner changes (screens, players, play order) need two-factor. Lab may turn it off.
+    'owner_requires_mfa' => ! $lab || (bool) env('OWNER_REQUIRE_MFA', true),
 
     'manifest' => [
+        // Base64 32-byte Ed25519 seed. Only the signer (scheduler) needs it; the API never does.
         'signing_key_path' => env('MANIFEST_SIGNING_KEY_PATH'),
+        // The public half, handed to devices when they enrol.
+        'public_key' => env('MANIFEST_SIGNING_PUBKEY'),
+        // Re-sign an unchanged playlist when it has less than this left before it expires.
+        'renew_before_seconds' => 12 * 3600,
+    ],
+
+    // Screen players: client certificates from the device CA, and the one-time enrolment code.
+    'devices' => [
+        'ca_cert_path' => env('DEVICE_CA_CERT_PATH', '/run/secrets/device_ca.crt'),
+        'ca_key_path' => env('DEVICE_CA_KEY_PATH', '/run/secrets/device_ca.key'),
+        'cert_days' => 365,
+        'code_ttl_minutes' => 30,
     ],
 
     // Booking hours, play times and "today" are Nepal time, whatever the server clock says.
@@ -21,7 +41,7 @@ return [
         'max_attempts' => 5,
         'resend_seconds' => 60,
         // Lab only: return the code in the API response instead of needing a real SMS.
-        'expose_code' => (bool) env('OTP_EXPOSE_CODE', false) && (bool) env('LAB_LOCAL_LOGIN', false),
+        'expose_code' => $lab && (bool) env('OTP_EXPOSE_CODE', false) && (bool) env('LAB_LOCAL_LOGIN', false),
     ],
 
     'sms' => [
@@ -51,5 +71,5 @@ return [
     ],
 
     // Lab: the scheduler fakes proof-of-play for live bookings until real players report it.
-    'simulate_plays' => (bool) env('SIMULATE_PLAYS', false),
+    'simulate_plays' => $lab && (bool) env('SIMULATE_PLAYS', false),
 ];

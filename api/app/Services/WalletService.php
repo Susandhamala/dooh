@@ -16,8 +16,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 /**
- * Prepaid wallets. Available = balance − reserved. Booking holds money (reserve), each play charges
- * it (balance and reserve both drop), and unused holds are released back to available.
+ * Prepaid wallets. Load money first; a booking is paid in full from the balance when it is made, and
+ * plays that never happen (cancelled, ad pulled, screen off) are refunded.
  */
 class WalletService
 {
@@ -52,8 +52,8 @@ class WalletService
         });
     }
 
-    /** Reserve $paisa for a booking. Call inside a transaction that also creates the booking. */
-    public function hold(Organisation $org, int $paisa, string $description, string $reference, ?int $userId): void
+    /** Pay $paisa for a booking. Call inside the transaction that creates the booking. */
+    public function pay(Organisation $org, int $paisa, string $description, string $reference, ?int $userId): void
     {
         $wallet = $this->wallets->lockForOrganisation($org);
         if ($wallet->availablePaisa() < $paisa) {
@@ -62,27 +62,17 @@ class WalletService
                 'wallet' => ["You need रू {$short} more."],
             ]);
         }
-        $this->wallets->apply($wallet, WalletEntryType::Hold, 0, $paisa, -$paisa, $description, $reference, $userId);
+        $this->wallets->apply($wallet, WalletEntryType::Charge, -$paisa, 0, -$paisa, $description, $reference, $userId);
     }
 
-    /** Spend $paisa of an existing hold (plays that happened). */
-    public function charge(Organisation $org, int $paisa, string $description, string $reference): void
+    /** Give back money for plays that will not happen. */
+    public function refund(Organisation $org, int $paisa, string $description, string $reference, ?int $userId = null): void
     {
         if ($paisa <= 0) {
             return;
         }
         $wallet = $this->wallets->lockForOrganisation($org);
-        $this->wallets->apply($wallet, WalletEntryType::Charge, -$paisa, -$paisa, -$paisa, $description, $reference);
-    }
-
-    /** Give back the unused part of a hold. */
-    public function release(Organisation $org, int $paisa, string $description, string $reference, ?int $userId = null): void
-    {
-        if ($paisa <= 0) {
-            return;
-        }
-        $wallet = $this->wallets->lockForOrganisation($org);
-        $this->wallets->apply($wallet, WalletEntryType::Release, 0, -$paisa, $paisa, $description, $reference, $userId);
+        $this->wallets->apply($wallet, WalletEntryType::Refund, $paisa, 0, $paisa, $description, $reference, $userId);
     }
 
     private function advertiser(User $user, string $orgUuid): Organisation

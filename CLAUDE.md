@@ -17,5 +17,6 @@ Plan and threat model: docs/PLAN.md. Read it before designing a feature.
 ```bash
 make test          # api (pest) + portal (vue-tsc, vitest) + player (pytest)
 make up            # docker stack; make lab adds emulated screens
-infra/ca/lab-ca.sh device <name>   # issue a lab device certificate
+make prod          # production (docs/DEPLOY.md); make backup / make restore DIR=...
+infra/ca/lab-ca.sh server IP:<lan-ip>   # server cert a Raspberry Pi on the LAN accepts
 ```

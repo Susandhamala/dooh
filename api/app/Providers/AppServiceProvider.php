@@ -29,5 +29,8 @@ class AppServiceProvider extends ServiceProvider
                 ?? NepaliPhone::normalise((string) $request->input('phone'))
                 ?? mb_strtolower((string) $request->input('email')))),
         ]);
+
+        // A device typing its enrolment code. The code is single-use and expires, this stops guessing.
+        RateLimiter::for('device-enrol', fn (Request $request) => Limit::perMinute(5)->by('ip:'.$request->ip()));
     }
 }

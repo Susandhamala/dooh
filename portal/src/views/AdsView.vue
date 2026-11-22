@@ -118,7 +118,7 @@ onBeforeUnmount(() => clearTimeout(poll))
 
 <template>
   <div class="shell py-8 sm:py-10">
-    <PageHeader eyebrow="Create" title="My ads" lede="Upload once, book on any screen of the same shape. Our review team checks every ad before it plays.">
+    <PageHeader eyebrow="Create" title="My ads" lede="Upload once, book on any screen of the same shape. Our review team approves every ad before it can be booked.">
       <template v-if="!showForm && ads.length" #actions>
         <button type="button" class="btn-primary" @click="showForm = true"><AppIcon name="upload" :size="18" /> Upload ad</button>
       </template>
@@ -254,14 +254,14 @@ onBeforeUnmount(() => clearTimeout(poll))
             {{ a.review_note || 'The review team refused this ad.' }}
           </AlertBox>
           <p v-else-if="a.status === 'in_review'" class="mt-3 flex items-center gap-1.5 text-sm text-warning">
-            <AppIcon name="clock" :size="15" /> Our team is reviewing it. You can already book it.
+            <AppIcon name="clock" :size="15" /> Our team is reviewing it. You can book once it is approved.
           </p>
           <p v-else-if="a.status === 'approved'" class="mt-3 flex items-center gap-1.5 text-sm text-success">
             <AppIcon name="shield" :size="15" /> Ready to play on {{ a.orientation }} screens.
           </p>
 
           <div class="mt-auto flex gap-2 pt-4">
-            <RouterLink v-if="a.status === 'approved' || a.status === 'in_review'" to="/screens" class="btn-primary btn-sm flex-1">Book a screen</RouterLink>
+            <RouterLink v-if="a.status === 'approved'" to="/screens" class="btn-primary btn-sm flex-1">Book a screen</RouterLink>
             <button type="button" class="btn-ghost btn-sm text-danger hover:bg-danger/8 hover:text-danger" :aria-label="`Delete ${a.name}`" @click="deleting = a">
               <AppIcon name="trash" :size="16" />
             </button>

@@ -8,11 +8,19 @@ The signature covers the exact payload bytes, so neither side has to canonicalis
 The payload JSON looks like:
 
     {"screen_id": "...", "version": 7, "valid_from": 1730000000, "expires_at": 1730086400,
-     "items": [{"creative_id": "...", "url": "...", "sha256": "<hex>", "duration_s": 10}]}
+     "tz_offset_s": 20700, "loop_seconds": 120, "spot_seconds": 10,
+     "items": [{"creative_id": "...", "url": "/device/v1/media/...", "sha256": "<hex>", "duration_s": 10,
+                "slot_index": 3, "slot_count": 1, "windows": [[1730000000, 1730007200]]}]}
 
 Times are Unix seconds. A device accepts a manifest only if the signature verifies, it is
 for this screen, its version is strictly newer than the last accepted one, and now falls
 inside [valid_from, expires_at].
+
+Schedule: the loop restarts at the top of every local hour (UTC + tz_offset_s). Slot i starts
+i * spot_seconds into each loop. An item takes slot_count back-to-back slots from slot_index (a
+longer video takes several; 1 when absent) and plays there only while now is inside one of its
+[from, to) windows. A url is either https:// or a path on the device API; either way the
+file is only kept if its SHA-256 matches.
 """
 
 from __future__ import annotations
@@ -39,6 +47,15 @@ class Item:
     url: str
     sha256: str
     duration_s: int
+    slot_index: int
+    windows: tuple[tuple[int, int], ...]
+    slot_count: int = 1
+
+    def plays_at(self, now: int) -> bool:
+        return any(start <= now < end for start, end in self.windows)
+
+    def covers(self, slot: int) -> bool:
+        return self.slot_index <= slot < self.slot_index + self.slot_count
 
 
 @dataclass(frozen=True)
@@ -47,6 +64,9 @@ class Manifest:
     version: int
     valid_from: int
     expires_at: int
+    tz_offset_s: int
+    loop_seconds: int
+    spot_seconds: int
     items: tuple[Item, ...]
 
 
@@ -71,8 +91,15 @@ def verify(envelope: dict, public_key: bytes, *, screen_id: str, last_version: i
             version=_int(data["version"]),
             valid_from=_int(data["valid_from"]),
             expires_at=_int(data["expires_at"]),
+            tz_offset_s=_int(data["tz_offset_s"]),
+            loop_seconds=_int(data["loop_seconds"]),
+            spot_seconds=_int(data["spot_seconds"]),
             items=tuple(_item(i) for i in data["items"]),
         )
+        if not 0 < manifest.spot_seconds <= manifest.loop_seconds <= 3600:
+            raise ValueError("bad loop")
+        if any(i.slot_index + i.slot_count > manifest.loop_seconds // manifest.spot_seconds for i in manifest.items):
+            raise ValueError("item runs past the end of the loop")
     except (KeyError, TypeError, ValueError) as e:
         raise ManifestError("malformed payload") from e
 
@@ -96,9 +123,17 @@ def _item(data: dict) -> Item:
     if not _SHA256_HEX.match(sha):
         raise ValueError("bad sha256")
     url = str(data["url"])
-    if not url.startswith("https://"):
-        raise ValueError("item url must be https")
+    if not (url.startswith("https://") or (url.startswith("/") and not url.startswith("//"))):
+        raise ValueError("item url must be https or a path on the device API")
     duration = _int(data["duration_s"])
     if duration <= 0:
         raise ValueError("bad duration")
-    return Item(creative_id=str(data["creative_id"]), url=url, sha256=sha, duration_s=duration)
+    slot = _int(data["slot_index"])
+    if slot < 0:
+        raise ValueError("bad slot")
+    count = _int(data.get("slot_count", 1))
+    if count < 1:
+        raise ValueError("bad slot count")
+    windows = tuple((_int(w[0]), _int(w[1])) for w in data["windows"])
+    return Item(creative_id=str(data["creative_id"]), url=url, sha256=sha, duration_s=duration,
+                slot_index=slot, windows=windows, slot_count=count)

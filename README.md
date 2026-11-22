@@ -69,7 +69,7 @@ API tests use the `dooh_test` database with the credentials in `api/phpunit.xml`
 cp .env.example .env                 # set DB_PASSWORD
 cp api/.env.example api/.env         # same DB_PASSWORD; APP_KEY and JWT_SECRET: any random base64 / hex
                                      # lab: LAB_LOCAL_LOGIN=true OTP_EXPOSE_CODE=true SIMULATE_PLAYS=true
-bash infra/ca/lab-ca.sh init         # Git Bash
+bash infra/ca/lab-ca.sh init         # Git Bash: device CA, server cert, manifest signing key
 docker compose up -d --build
 docker compose exec api php artisan migrate --seed
 ```
@@ -87,3 +87,33 @@ make test      # API + player tests
 ```
 
 Portal: http://localhost:8080 · API: http://localhost:8080/api/v1 · Device endpoint (mTLS): https://localhost:8443
+
+## Screens (players)
+
+A screen's player enrols with a one-time code from the portal (**My screens → Connect player**),
+makes its own key pair and gets a client certificate. From then on it fetches a signed playlist
+every minute over mutual TLS and plays it, offline too.
+
+- **Emulated screen** (Docker, logs what it would show):
+
+  ```bash
+  docker compose run --rm player-1 enrol --api https://web:8443 --ca /etc/dooh-lab/ca.crt --code XXXX-XXXX
+  docker compose --profile lab up -d player-1
+  docker compose logs -f player-1
+  ```
+
+  (In Git Bash, put `MSYS_NO_PATHCONV=1` in front of the first command.)
+
+- **Raspberry Pi** on a real screen: [docs/RASPBERRY_PI.md](docs/RASPBERRY_PI.md).
+
+Lab set up before signed manifests? Create the signing key with `bash infra/ca/lab-ca.sh manifest-key`.
+
+## Production
+
+Deploying to ads.rentallnepal.com (server, keys, TLS, updates, backups, and what still needs
+outside accounts): [docs/DEPLOY.md](docs/DEPLOY.md).
+
+```bash
+make prod      # docker-compose.yml + docker-compose.prod.yml, migrations run on start
+make backup    # database dump + uploaded files into backups/<date>/
+```

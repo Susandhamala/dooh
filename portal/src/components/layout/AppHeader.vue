@@ -26,15 +26,26 @@ interface NavItem {
 }
 
 const nav = computed<NavItem[]>(() => {
-  const items: NavItem[] = [{ label: 'Find screens', to: { name: 'screens' }, icon: 'map', match: ['screens', 'screen'] }]
-  if (auth.isLoggedIn) {
-    items.push(
-      { label: 'My ads', to: { name: 'ads' }, icon: 'film', match: ['ads'] },
-      { label: 'Bookings', to: { name: 'bookings' }, icon: 'calendar', match: ['bookings'] },
-    )
+  const find: NavItem = { label: 'Find screens', to: { name: 'screens' }, icon: 'map', match: ['screens', 'screen'] }
+  if (!auth.isLoggedIn) {
+    return [
+      find,
+      { label: 'How it works', to: { path: '/', hash: '#how' }, icon: 'info', match: [] },
+      { label: 'FAQ', to: { path: '/', hash: '#faq' }, icon: 'inbox', match: [] },
+    ]
   }
-  if (auth.hasRole('admin')) items.push({ label: 'Review', to: { name: 'admin' }, icon: 'shield', match: ['admin'] })
-  return items
+  // Signed in: the dashboard comes first (for admins it is the admin panel).
+  const dashboard: NavItem = auth.hasRole('admin')
+    ? { label: 'Dashboard', to: { name: 'admin' }, icon: 'grid', match: ['admin', 'dashboard'] }
+    : { label: 'Dashboard', to: { name: 'dashboard' }, icon: 'layers', match: ['dashboard'] }
+  return [
+    dashboard,
+    find,
+    { label: 'My ads', to: { name: 'ads' }, icon: 'film', match: ['ads'] },
+    { label: 'Bookings', to: { name: 'bookings' }, icon: 'calendar', match: ['bookings'] },
+    // Screen owners also get their side of the platform.
+    ...(orgs.owners.length ? [{ label: 'My screens', to: { name: 'owner' }, icon: 'screen', match: ['owner', 'screen-schedule', 'owner-screens'] } as NavItem] : []),
+  ]
 })
 
 const isActive = (item: NavItem) => item.match.includes(String(route.name))
@@ -107,7 +118,7 @@ onBeforeUnmount(() => {
 <template>
   <header class="sticky top-0 z-40 border-b border-line bg-white/90 backdrop-blur-md supports-[backdrop-filter]:bg-white/80">
     <div class="shell flex h-16 items-center gap-3 sm:h-[72px] lg:gap-5">
-      <RouterLink :to="auth.isLoggedIn ? '/dashboard' : '/'" class="flex shrink-0 items-center gap-2.5" aria-label="Screen Ads home">
+      <RouterLink to="/" class="flex shrink-0 items-center gap-2.5" aria-label="Screen Ads home">
         <img src="/brand/logo-mark.png" width="140" height="148" alt="" class="h-9 w-auto sm:h-10" draggable="false" />
         <span class="leading-none">
           <span class="block text-[11px] font-semibold tracking-[0.12em] text-subtle uppercase">RentALL Nepal</span>
@@ -164,7 +175,7 @@ onBeforeUnmount(() => {
               <AppIcon name="idcard" :size="18" /> Identity verification
               <span class="ml-auto text-xs font-bold" :class="docLabel.cls">{{ docLabel.text }}</span>
             </RouterLink>
-            <RouterLink to="/orgs" class="flex items-center gap-2.5 px-4 py-2.5 text-sm font-semibold text-ink-soft hover:bg-plum-50" role="menuitem">
+            <RouterLink :to="orgs.owners.length ? '/owner' : '/orgs'" class="flex items-center gap-2.5 px-4 py-2.5 text-sm font-semibold text-ink-soft hover:bg-plum-50" role="menuitem">
               <AppIcon name="screen" :size="18" /> {{ orgs.owners.length ? 'My screens' : 'List your screens' }}
             </RouterLink>
             <RouterLink to="/security" class="flex items-center gap-2.5 px-4 py-2.5 text-sm font-semibold text-ink-soft hover:bg-plum-50" role="menuitem">
@@ -209,9 +220,6 @@ onBeforeUnmount(() => {
           <span class="flex items-center gap-2 text-sm font-semibold"><AppIcon name="wallet" :size="18" /> Wallet</span>
           <span class="font-extrabold">{{ wallets.wallet ? formatRupees(wallets.wallet.available) : '–' }}</span>
         </RouterLink>
-        <RouterLink v-if="auth.isLoggedIn" to="/dashboard" class="flex items-center gap-3 rounded-xl px-3 py-3 text-[15px] font-semibold" :class="route.name === 'dashboard' ? 'bg-plum-100 text-plum-900' : 'text-ink-soft'">
-          <AppIcon name="layers" :size="18" /> Dashboard
-        </RouterLink>
         <RouterLink
           v-for="item in nav"
           :key="item.label"
@@ -227,7 +235,7 @@ onBeforeUnmount(() => {
             <AppIcon name="idcard" :size="18" /> Identity verification
             <span class="ml-auto text-xs font-bold" :class="docLabel.cls">{{ docLabel.text }}</span>
           </RouterLink>
-          <RouterLink to="/orgs" class="flex items-center gap-3 rounded-xl px-3 py-3 text-[15px] font-semibold text-ink-soft">
+          <RouterLink :to="orgs.owners.length ? '/owner' : '/orgs'" class="flex items-center gap-3 rounded-xl px-3 py-3 text-[15px] font-semibold text-ink-soft">
             <AppIcon name="screen" :size="18" /> {{ orgs.owners.length ? 'My screens' : 'List your screens' }}
           </RouterLink>
           <RouterLink to="/security" class="flex items-center gap-3 rounded-xl px-3 py-3 text-[15px] font-semibold text-ink-soft">

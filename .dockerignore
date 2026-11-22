@@ -1,0 +1,27 @@
+# Keep secrets and host build output out of the images. Settings reach containers through env_file
+# at run time, never through a layer someone could pull.
+**/.env
+**/.env.*
+!**/.env.example
+.git
+.github
+docs
+infra/ca/out
+
+api/vendor
+api/node_modules
+api/bootstrap/cache/*.php
+api/storage/logs/*
+api/storage/framework/cache/data/*
+api/storage/framework/sessions/*
+api/storage/framework/views/*
+api/.phpunit.cache
+
+portal/node_modules
+portal/dist
+
+player/.venv
+**/__pycache__
+**/.pytest_cache
+**/*.egg-info
+backups
