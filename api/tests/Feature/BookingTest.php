@@ -42,7 +42,7 @@ function wallet(): Wallet
 it('prices by the play and takes the whole cost from the wallet at booking', function () {
     // 3 days × 2 hours × 30 plays/hour = 180 plays × रू 2 = रू 360.
     book()->assertCreated()
-        ->assertJsonPath('data.status', 'scheduled')
+        ->assertJsonPath('data.status', 'awaiting_owner')
         ->assertJsonPath('data.plays_total', 180)
         ->assertJsonPath('data.price', '360.00')
         ->assertJsonPath('data.refundable', '360.00')
@@ -142,8 +142,8 @@ it('only books approved ads that fit the screen', function () {
     book(['creative_id' => $refused->uuid])->assertUnprocessable();
 
     $waiting = Creative::factory()->inReview()->create(['organisation_id' => $this->org]);
-    book(['creative_id' => $waiting->uuid])->assertUnprocessable()
-        ->assertJsonPath('errors.creative_id.0', 'This ad is waiting for our review team. You can book it once it is approved.');
+    // An ad still in review can be booked: the screen owner approves ad and booking together.
+    book(['creative_id' => $waiting->uuid, 'start_time' => '12:00', 'end_time' => '13:00'])->assertCreated()->assertJsonPath('data.status', 'awaiting_owner');
 
     $fourK = Creative::factory()->create(['organisation_id' => $this->org, 'width_px' => 3840, 'height_px' => 2160]);
     book(['creative_id' => $fourK->uuid])->assertCreated(); // same shape, any size
@@ -162,6 +162,7 @@ it('cancels and refunds the plays that have not happened', function () {
 it('goes live at the first booked hour, counts each play once, and refunds missed plays at the end', function () {
     $id = book()->json('data.id');
     $booking = Booking::where('uuid', $id)->first();
+    $booking->update(['status' => 'scheduled']); // the screen owner approved it
     $bookings = app(BookingService::class);
     $plays = app(PlayService::class);
 

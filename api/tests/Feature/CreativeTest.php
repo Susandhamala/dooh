@@ -104,7 +104,7 @@ it('refunds the bookings of an approved ad that is later pulled', function () {
     $day = now('Asia/Kathmandu')->addDays(2)->toDateString();
     $book = fn ($h) => actingAsApi($this->user)->postJson("/api/v1/orgs/{$this->org->uuid}/bookings", [
         'screen_id' => $screen->uuid, 'creative_id' => $ad->uuid, 'start_date' => $day, 'end_date' => $day, 'start_time' => sprintf('%02d:00', $h), 'end_time' => sprintf('%02d:00', $h + 1),
-    ])->assertCreated()->assertJsonPath('data.status', 'scheduled');
+    ])->assertCreated()->assertJsonPath('data.status', 'awaiting_owner');
     $book(8);
     $book(9);
     expect(Wallet::first()->balance_paisa)->toBe(100000 - 2 * 30 * 200);

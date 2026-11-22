@@ -15,9 +15,9 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 #[Fillable([
     'organisation_id', 'campaign_id', 'screen_id', 'creative_id', 'slot_count', 'repeats', 'status', 'price', 'hold_expires_at',
-    'date_range', 'start_minute', 'end_minute', 'price_per_play', 'plays_total', 'plays_done', 'loop_order',
+    'date_range', 'start_minute', 'end_minute', 'price_per_play', 'plays_total', 'plays_done', 'loop_order', 'booked_by',
 ])]
-#[Hidden(['id', 'organisation_id', 'campaign_id', 'screen_id', 'creative_id'])]
+#[Hidden(['id', 'organisation_id', 'campaign_id', 'screen_id', 'creative_id', 'booked_by'])]
 class Booking extends Model
 {
     use HasPublicUuid;
@@ -35,6 +35,11 @@ class Booking extends Model
     public function organisation(): BelongsTo
     {
         return $this->belongsTo(Organisation::class);
+    }
+
+    public function bookedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'booked_by');
     }
 
     public function creative(): BelongsTo

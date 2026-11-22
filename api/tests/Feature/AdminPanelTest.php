@@ -40,7 +40,7 @@ it('shows the numbers on the dashboard', function () {
 
     expect($data['users']['total'])->toBe(3)
         ->and($data['documents']['pending'])->toBe(1)
-        ->and($data['bookings']['scheduled'])->toBe(1)
+        ->and($data['bookings']['awaiting_owner'])->toBe(1)
         ->and($data['money']['loaded'])->toBe('1000.00')
         ->and($data['money']['paid'])->toBe('120.00')
         ->and($data['money']['balances'])->toBe('880.00')

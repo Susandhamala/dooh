@@ -5,7 +5,7 @@ import AppIcon from '@/components/ui/AppIcon.vue'
 import LoadingCards from '@/components/ui/LoadingCards.vue'
 import PageHeader from '@/components/ui/PageHeader.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
-import { formatDate, formatWindow } from '@/lib/format'
+import { formatDate, formatRupees, formatWindow } from '@/lib/format'
 import { nepalDay, nepalNow } from '@/lib/hours'
 import { errorMessage, get, mfaNeeded, post } from '@/lib/http'
 import { loopTime } from '@/lib/schedule'
@@ -89,6 +89,29 @@ async function move(booking: string, direction: 'up' | 'down') {
   }
 }
 
+/** One click: approve (plays at its booked times) or reject (refunded). */
+async function decide(booking: string, approve: boolean) {
+  busy.value = booking + (approve ? 'approve' : 'reject')
+  notice.value = null
+  try {
+    const res = await post<OwnerSchedule>(`/orgs/${props.org}/screens/${props.screen}/bookings/${booking}/${approve ? 'approve' : 'reject'}`, {
+      date: day.value,
+    })
+    data.value = res.data
+    notice.value = { tone: 'success', text: res.message ?? (approve ? 'Approved.' : 'Rejected.') }
+  } catch (e) {
+    const mfa = mfaNeeded(e)
+    notice.value = mfa
+      ? { tone: 'warning', text: 'Set up or verify two-factor security to approve bookings.' }
+      : { tone: 'danger', text: errorMessage(e) }
+  } finally {
+    busy.value = null
+  }
+}
+
+const when = (iso: string | null) =>
+  iso ? new Date(iso).toLocaleString('en-GB', { timeZone: 'Asia/Kathmandu', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''
+
 onMounted(async () => {
   get<Screen>(`/orgs/${props.org}/screens/${props.screen}`).then((r) => (screenInfo.value = r.data)).catch(() => {})
   await load()
@@ -113,6 +136,41 @@ const pad = (h: number) => String(h).padStart(2, '0')
     <LoadingCards v-else-if="loading" />
 
     <template v-else-if="data">
+      <!-- Waiting for the owner: one click to put it on the screen -->
+      <section class="card mb-4 border-warning/40 p-4 sm:p-5" aria-labelledby="pending-h">
+        <div class="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 id="pending-h" class="h-section">Waiting for your approval</h2>
+          <span class="badge bg-warning/10 text-warning">{{ data.pending.length }} waiting</span>
+        </div>
+        <AlertBox v-if="notice && !selected" :tone="notice.tone" class="mt-3">{{ notice.text }}</AlertBox>
+        <p v-if="!data.pending.length" class="mt-2 text-sm text-muted">Nothing to approve. New bookings appear here.</p>
+        <ul v-else class="mt-3 grid gap-3">
+          <li v-for="p in data.pending" :key="p.id" class="flex flex-wrap items-center gap-4 rounded-xl border border-line p-3">
+            <video v-if="p.kind === 'video' && p.media" :src="p.media" class="h-20 w-36 shrink-0 rounded-lg bg-night object-cover" muted loop autoplay playsinline />
+            <img v-else-if="p.media || p.thumb" :src="(p.thumb ?? p.media)!" alt="" class="h-20 w-36 shrink-0 rounded-lg bg-canvas object-cover" />
+            <span v-else class="grid h-20 w-36 shrink-0 place-items-center rounded-lg bg-canvas text-subtle"><AppIcon name="film" /></span>
+            <div class="min-w-0 flex-1">
+              <p class="font-bold text-ink">{{ p.ad }}</p>
+              <p class="text-sm text-ink-soft">
+                {{ p.advertiser }} · booked by <strong>{{ p.booked_by ?? 'unknown' }}</strong>
+                <span v-if="p.booked_by_phone" class="text-muted">({{ p.booked_by_phone }})</span>
+              </p>
+              <p class="text-sm text-muted">
+                Plays {{ formatDate(p.starts_on) }}<template v-if="p.ends_on !== p.starts_on"> – {{ formatDate(p.ends_on) }}</template>,
+                {{ formatWindow(p.start_time, p.end_time) }} · {{ p.plays_total }} plays · {{ formatRupees(p.price) }}
+              </p>
+              <p class="text-xs text-subtle">Booked {{ when(p.booked_at) }}</p>
+            </div>
+            <div class="flex shrink-0 gap-2">
+              <button type="button" class="btn-outline btn-sm" :disabled="!!busy" @click="decide(p.id, false)">Reject</button>
+              <button type="button" class="btn-primary btn-sm" :disabled="!!busy" @click="decide(p.id, true)">
+                <AppIcon name="check" :size="16" /> {{ busy === p.id + 'approve' ? 'Approving…' : 'Approve & play' }}
+              </button>
+            </div>
+          </li>
+        </ul>
+      </section>
+
       <!-- Day -->
       <div class="-mx-4 flex gap-2 overflow-x-auto px-4 pb-2 sm:mx-0 sm:flex-wrap sm:px-0" role="radiogroup" aria-label="Day">
         <button
@@ -230,7 +288,7 @@ const pad = (h: number) => String(h).padStart(2, '0')
             <thead class="text-xs text-subtle">
               <tr>
                 <th class="py-2 pr-3 font-semibold">Ad</th>
-                <th class="py-2 pr-3 font-semibold">Advertiser</th>
+                <th class="py-2 pr-3 font-semibold">Booked by</th>
                 <th class="py-2 pr-3 font-semibold">Time</th>
                 <th class="py-2 pr-3 font-semibold">Dates</th>
                 <th class="py-2 pr-3 font-semibold">Plays a day</th>
@@ -242,7 +300,9 @@ const pad = (h: number) => String(h).padStart(2, '0')
                 <td class="py-2.5 pr-3">
                   <span class="flex items-center gap-2 font-semibold text-ink"><span class="h-3 w-3 shrink-0 rounded-sm" :class="colorOf[b.id]" />{{ b.ad }}</span>
                 </td>
-                <td class="py-2.5 pr-3 text-muted">{{ b.advertiser }}</td>
+                <td class="py-2.5 pr-3 text-muted">
+                  {{ b.booked_by ?? '—' }}<span class="block text-xs text-subtle">{{ b.advertiser }} · {{ when(b.booked_at) }}</span>
+                </td>
                 <td class="py-2.5 pr-3 [font-variant-numeric:tabular-nums]">{{ formatWindow(b.start_time, b.end_time) }}</td>
                 <td class="py-2.5 pr-3 text-muted">{{ formatDate(b.starts_on) }} – {{ formatDate(b.ends_on) }}</td>
                 <td class="py-2.5 pr-3 [font-variant-numeric:tabular-nums]">{{ b.plays_per_day }}</td>

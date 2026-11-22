@@ -138,12 +138,14 @@ class BookingService
                 'organisation_id' => $org->getKey(),
                 'screen_id' => $screen->getKey(),
                 'creative_id' => $creative->getKey(),
+                'booked_by' => $user->getKey(),
                 'slot_count' => $need,
                 'repeats' => $repeats,
                 'date_range' => Booking::dateRange($start, $end),
                 'start_minute' => $startMinute,
                 'end_minute' => $endMinute,
-                'status' => BookingStatus::Scheduled,
+                // The screen owner approves it before it plays (OwnerScheduleService::decide).
+                'status' => BookingStatus::AwaitingOwner,
                 'price_per_play' => Money::toRupees($q['price_per_play_paisa']),
                 'plays_total' => $q['plays_total'],
                 'price' => Money::toRupees($q['total_paisa']),
@@ -211,7 +213,13 @@ class BookingService
                 $b = $this->bookings->lock($booking);
                 [$startAt, $endAt] = $this->window($b);
 
-                if ($endAt <= $now) {
+                if ($b->status === BookingStatus::AwaitingOwner) {
+                    // Never approved before its time ran out: everything back.
+                    if ($endAt <= $now) {
+                        $this->close($b, BookingStatus::Rejected, 'Not approved in time, refunded');
+                        $out['completed']++;
+                    }
+                } elseif ($endAt <= $now) {
                     $this->close($b, BookingStatus::Completed, 'Booking finished, missed plays refunded');
                     $out['completed']++;
                 } elseif ($b->status === BookingStatus::Scheduled && $startAt <= $now) {
@@ -241,6 +249,35 @@ class BookingService
         ];
     }
 
+    /**
+     * The screen owner's decision on a booking waiting for them. Approve: it plays at its booked
+     * times (and its ad counts as reviewed for this screen). Reject: the whole price is refunded.
+     */
+    public function decideByOwner(Booking $booking, bool $approve, User $owner, ?string $note = null): Booking
+    {
+        return DB::transaction(function () use ($booking, $approve, $owner, $note) {
+            $b = $this->bookings->lock($booking);
+            if ($b->status !== BookingStatus::AwaitingOwner) {
+                throw DomainError::conflict('This booking is not waiting for approval.');
+            }
+            if (! $approve) {
+                $this->close($b, BookingStatus::Rejected, 'Not accepted by the screen owner'.($note ? " ({$note})" : ''), $owner->getKey());
+
+                return $b;
+            }
+
+            $creative = $b->creative;
+            if ($creative && $creative->status === CreativeStatus::InReview) {
+                $creative->fill(['status' => CreativeStatus::Approved, 'reviewed_by' => $owner->getKey(), 'reviewed_at' => now(), 'review_note' => $note]);
+                $this->creatives->save($creative);
+            }
+            $b->status = BookingStatus::Scheduled;
+            $this->bookings->save($b);
+
+            return $b;
+        });
+    }
+
     private function cancelBooking(Booking $booking, string $why, int $userId): Booking
     {
         return DB::transaction(function () use ($booking, $why, $userId) {
@@ -267,10 +304,11 @@ class BookingService
     {
         $fail = fn (string $msg) => new DomainError($msg, 422, ['creative_id' => [$msg]]);
 
-        if ($creative->status !== CreativeStatus::Approved) {
+        // Approved ads, and ads still waiting for review: the screen owner sees the ad and approves
+        // it together with the booking.
+        if (! in_array($creative->status, [CreativeStatus::Approved, CreativeStatus::InReview], true)) {
             throw $fail(match ($creative->status) {
                 CreativeStatus::Processing => 'This ad is still being checked. Try again in a minute.',
-                CreativeStatus::InReview => 'This ad is waiting for our review team. You can book it once it is approved.',
                 CreativeStatus::Failed => 'This ad failed the file checks. Upload a fixed version.',
                 default => 'This ad was not approved, so it cannot be booked.',
             });

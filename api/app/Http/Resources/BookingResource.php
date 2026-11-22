@@ -44,7 +44,7 @@ class BookingResource extends JsonResource
 
     public function toArray(Request $request): array
     {
-        $open = in_array($this->status, [BookingStatus::Scheduled, BookingStatus::Live], true);
+        $open = in_array($this->status, [BookingStatus::AwaitingOwner, BookingStatus::Scheduled, BookingStatus::Live], true);
         $unplayed = max(0, Money::toPaisa($this->price) - $this->plays_done * Money::toPaisa($this->price_per_play));
 
         return [

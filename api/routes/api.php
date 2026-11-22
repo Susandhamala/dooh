@@ -99,6 +99,8 @@ Route::prefix('v1')->group(function () {
             Route::get('screens/{screen}/schedule', [OwnerScheduleController::class, 'schedule'])->whereUuid('screen');
             Route::middleware('mfa:owner')->group(function () {
                 Route::post('screens/{screen}/bookings/{booking}/move', [OwnerScheduleController::class, 'move'])->whereUuid(['screen', 'booking']);
+                Route::post('screens/{screen}/bookings/{booking}/approve', [OwnerScheduleController::class, 'approve'])->whereUuid(['screen', 'booking']);
+                Route::post('screens/{screen}/bookings/{booking}/reject', [OwnerScheduleController::class, 'reject'])->whereUuid(['screen', 'booking']);
                 Route::post('screens', [OwnerScreenController::class, 'store']);
                 Route::patch('screens/{screen}', [OwnerScreenController::class, 'update'])->whereUuid('screen');
                 // Connecting a player (Raspberry Pi) to a screen, and disconnecting a lost one.

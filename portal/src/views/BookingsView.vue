@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import AlertBox from '@/components/ui/AlertBox.vue'
 import AppIcon from '@/components/ui/AppIcon.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
@@ -25,9 +26,12 @@ const error = ref<string | null>(null)
 const tab = ref<'active' | 'past'>('active')
 const cancelling = ref<Booking | null>(null)
 const busy = ref(false)
-const notice = ref<string | null>(null)
+// Coming straight from booking: say what happens next.
+const notice = ref<string | null>(
+  useRoute().query.sent ? 'Sent to the screen owner. Your ad plays at its booked times once they approve it; if they don’t, you get every rupee back.' : null,
+)
 
-const ACTIVE = ['scheduled', 'live']
+const ACTIVE = ['awaiting_owner', 'scheduled', 'live']
 const active = computed(() => bookings.value.filter((b) => ACTIVE.includes(b.status)))
 const past = computed(() => bookings.value.filter((b) => !ACTIVE.includes(b.status)))
 const shown = computed(() => (tab.value === 'active' ? active.value : past.value))

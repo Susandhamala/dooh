@@ -274,6 +274,8 @@ export interface OwnerOverview {
   published: number
   players: number
   players_online: number
+  /** Bookings waiting for the owner's approval. */
+  waiting: number
   live: number
   upcoming: number
   today: number
@@ -287,21 +289,32 @@ export interface OwnerSchedule {
   loop_seconds: number
   spot_seconds: number
   slots_per_loop: number
-  bookings: {
-    id: string
-    status: string
-    advertiser: string | null
-    ad: string | null
-    kind: 'image' | 'video' | null
-    thumb: string | null
-    start_time: string
-    end_time: string
-    starts_on: string
-    ends_on: string
-    slot_count: number
-    repeats: number
-    plays_per_day: number
-  }[]
+  bookings: OwnerBooking[]
+  /** Waiting for the owner's approval (any day), oldest first. */
+  pending: OwnerBooking[]
   /** Each hour of the day: ads in play order, with the first slot of each play. */
   hours: { hour: number; used: number; ads: { booking: string; slots: number[]; slot_count: number }[] }[]
+}
+
+/** A booking as the screen owner sees it: the ad, who booked it and when, and when it plays. */
+export interface OwnerBooking {
+  id: string
+  status: string
+  advertiser: string | null
+  booked_by: string | null
+  booked_by_phone: string | null
+  booked_at: string | null
+  ad: string | null
+  kind: 'image' | 'video' | null
+  thumb: string | null
+  media: string | null
+  start_time: string
+  end_time: string
+  starts_on: string
+  ends_on: string
+  slot_count: number
+  repeats: number
+  plays_per_day: number
+  plays_total: number
+  price: string
 }

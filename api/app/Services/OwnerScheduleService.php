@@ -27,6 +27,7 @@ class OwnerScheduleService
         private BookingRepository $bookings,
         private LoopService $loops,
         private OrganisationService $orgs,
+        private BookingService $bookingService,
     ) {}
 
     /** Screens, players online, ads running and money earned, for one owner organisation. */
@@ -72,22 +73,10 @@ class OwnerScheduleService
             'loop_seconds' => $screen->loop_seconds,
             'spot_seconds' => $screen->spot_seconds,
             'slots_per_loop' => $screen->slotCount(),
-            'bookings' => $booked->values()->map(fn (Booking $b) => [
-                'id' => $b->uuid,
-                'status' => $b->status->value,
-                'advertiser' => $b->organisation?->name,
-                'ad' => $b->creative?->name,
-                'kind' => $b->creative?->kind,
-                'thumb' => $b->creative ? $this->thumb($b) : null,
-                'start_time' => PlaySchedule::time($b->start_minute),
-                'end_time' => PlaySchedule::time($b->end_minute),
-                'starts_on' => $b->starts_on->toDateString(),
-                'ends_on' => $b->ends_on->toDateString(),
-                'slot_count' => $b->slot_count,
-                'repeats' => $b->repeats,
-                'plays_per_day' => $b->playsPerDay(),
-            ])->all(),
+            'bookings' => $booked->values()->map(fn (Booking $b) => $this->row($b))->all(),
             'hours' => $hours,
+            // Bookings on this screen (any day) waiting for the owner's approval, oldest first.
+            'pending' => $this->bookings->awaitingOn($screen)->map(fn (Booking $b) => $this->row($b))->all(),
         ];
     }
 
@@ -137,11 +126,46 @@ class OwnerScheduleService
         $this->loops->forget();
     }
 
-    private function thumb(Booking $b): ?string
+    /** Approve (it plays at its booked times) or reject (refunded) a booking on the owner's screen. */
+    public function decide(User $user, string $orgUuid, string $screenUuid, string $bookingUuid, bool $approve, ?string $note): void
     {
-        return $b->creative->processed_path && $b->creative->thumb_path
-            ? URL::temporarySignedRoute('media.creative', now()->addMinutes(30), ['creative' => $b->creative->uuid, 'variant' => 'thumb'], absolute: false)
-            : null;
+        $screen = $this->screens->ownerScreen($user, $orgUuid, $screenUuid);
+        $this->orgs->membership($user, $orgUuid, OrganisationType::Owner, write: true);
+        $booking = $this->bookings->findOnScreen($screen, $bookingUuid)
+            ?? throw (new ModelNotFoundException)->setModel(Booking::class);
+
+        $this->bookingService->decideByOwner($booking, $approve, $user, $note);
+        $this->loops->forget();
+    }
+
+    /** One booking as the owner sees it: the ad, who booked it and when, and when it plays. */
+    private function row(Booking $b): array
+    {
+        $media = fn (string $variant) => URL::temporarySignedRoute(
+            'media.creative', now()->addMinutes(30), ['creative' => $b->creative->uuid, 'variant' => $variant], absolute: false,
+        );
+
+        return [
+            'id' => $b->uuid,
+            'status' => $b->status->value,
+            'advertiser' => $b->organisation?->name,
+            'booked_by' => $b->bookedBy?->name,
+            'booked_by_phone' => $b->bookedBy?->phone,
+            'booked_at' => $b->created_at?->toIso8601String(),
+            'ad' => $b->creative?->name,
+            'kind' => $b->creative?->kind,
+            'thumb' => $b->creative?->processed_path && $b->creative->thumb_path ? $media('thumb') : null,
+            'media' => $b->creative?->processed_path ? $media('media') : null,
+            'start_time' => PlaySchedule::time($b->start_minute),
+            'end_time' => PlaySchedule::time($b->end_minute),
+            'starts_on' => $b->starts_on->toDateString(),
+            'ends_on' => $b->ends_on->toDateString(),
+            'slot_count' => $b->slot_count,
+            'repeats' => $b->repeats,
+            'plays_per_day' => $b->playsPerDay(),
+            'plays_total' => $b->plays_total,
+            'price' => (string) $b->price,
+        ];
     }
 
     private function today(): CarbonImmutable

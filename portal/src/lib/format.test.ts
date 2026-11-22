@@ -23,7 +23,7 @@ describe('format', () => {
   })
 
   it('labels every status in words', () => {
-    expect(statusMeta('awaiting_owner')).toEqual({ label: 'Awaiting owner', tone: 'warning' })
+    expect(statusMeta('awaiting_owner')).toEqual({ label: 'Waiting for owner', tone: 'warning' })
     expect(statusMeta('some_new_state')).toEqual({ label: 'Some new state', tone: 'neutral' })
   })
 })

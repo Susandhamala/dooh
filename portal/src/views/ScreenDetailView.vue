@@ -125,12 +125,13 @@ function misfit(a: Creative): string | null {
   if (s.content_rules?.some((r) => BLOCKS[r] === a.category)) return `This screen doesn’t show ${CATEGORIES[a.category] ?? a.category} ads.`
   return null
 }
-const pending = (a: Creative) => a.status === 'in_review' || a.status === 'processing'
+// In review is fine: the screen owner sees the ad and approves it with the booking.
+const pending = (a: Creative) => a.status === 'processing'
 /** Every approved ad, plus ones still being checked; the ones that can't be booked here say why. */
 const choices = computed(() =>
   ads.value
-    .filter((a) => a.status === 'approved' || pending(a))
-    .map((a) => ({ ad: a, why: pending(a) ? 'Being checked by our team. You can book it once approved.' : misfit(a) }))
+    .filter((a) => a.status === 'approved' || a.status === 'in_review' || pending(a))
+    .map((a) => ({ ad: a, why: pending(a) ? 'Still being checked. Ready in a minute.' : misfit(a) }))
     .sort((x, y) => Number(!!x.why) - Number(!!y.why)),
 )
 const bookable = computed(() => choices.value.filter((c) => !c.why).map((c) => c.ad))
@@ -190,7 +191,7 @@ async function book() {
       repeats: repeats.value,
     })
     await wallets.load()
-    router.push({ name: 'bookings' })
+    router.push({ name: 'bookings', query: { sent: '1' } })
   } catch (err) {
     const gate = gateNeeded(err)
     const status = (err as { response?: { status?: number } }).response?.status
@@ -395,9 +396,9 @@ const timesWord = (n: number) => (n === 1 ? 'Once' : n === 2 ? 'Twice' : `${n} t
               <AlertBox v-if="startsPast" tone="warning">That time has already passed today. Pick a later time or start tomorrow.</AlertBox>
               <AlertBox v-if="bookError">{{ bookError }}</AlertBox>
               <button type="button" class="btn-primary w-full" :disabled="!canBook || busy" @click="book">
-                {{ busy ? 'Paying…' : `Pay ${formatRupees(cost.total)} and book` }}
+                {{ busy ? 'Sending…' : `Pay ${formatRupees(cost.total)} and send for approval` }}
               </button>
-              <p class="text-center text-xs text-subtle">Paid from your wallet. Cancel any time: plays that haven’t happened are refunded.</p>
+              <p class="text-center text-xs text-subtle">The screen owner approves it, then it plays at your times. Not approved = full refund. Cancel any time.</p>
             </template>
           </div>
         </aside>

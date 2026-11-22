@@ -50,6 +50,7 @@ const tiles = computed(() => {
   const o = overview.value
   if (!o) return []
   return [
+    { label: 'Waiting for you', value: String(o.waiting), note: o.waiting ? 'open a screen to approve' : 'nothing to approve', icon: 'inbox' as const },
     { label: 'Screens', value: String(o.screens), note: `${o.published} on the map`, icon: 'screen' as const },
     { label: 'Players online', value: `${o.players_online} / ${o.players}`, note: o.players ? 'Raspberry Pi connected' : 'none connected yet', icon: 'play' as const },
     { label: 'Ads today', value: String(o.today), note: `${o.live} live · ${o.upcoming} coming up`, icon: 'calendar' as const },
@@ -87,7 +88,7 @@ const tiles = computed(() => {
     <LoadingCards v-else-if="loading" />
 
     <template v-else>
-      <section class="grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label="Summary">
+      <section class="grid grid-cols-2 gap-3 lg:grid-cols-5" aria-label="Summary">
         <div v-for="t in tiles" :key="t.label" class="card p-4 sm:p-5">
           <p class="flex items-center gap-2 text-sm font-semibold text-muted"><AppIcon :name="t.icon" :size="16" /> {{ t.label }}</p>
           <p class="mt-2 text-2xl font-extrabold text-plum-900 [font-variant-numeric:tabular-nums]">{{ t.value }}</p>

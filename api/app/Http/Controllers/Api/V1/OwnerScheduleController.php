@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\DecideBookingRequest;
 use App\Http\Requests\MoveBookingRequest;
 use App\Http\Requests\ScheduleRequest;
 use App\Http\Responses\ApiResponse;
@@ -34,6 +35,22 @@ class OwnerScheduleController extends Controller
         );
 
         return ApiResponse::success($this->owner->schedule($request->user(), $org, $screen, $this->day($request->validated('date'))), 'Play order changed.');
+    }
+
+    /** One click: the ad plays on the screen at its booked times. */
+    public function approve(DecideBookingRequest $request, string $org, string $screen, string $booking): JsonResponse
+    {
+        $this->owner->decide($request->user(), $org, $screen, $booking, true, $request->validated('note'));
+
+        return ApiResponse::success($this->owner->schedule($request->user(), $org, $screen, $this->day($request->validated('date'))), 'Approved. It plays at its booked times.');
+    }
+
+    /** Not on this screen: the advertiser gets their money back. */
+    public function reject(DecideBookingRequest $request, string $org, string $screen, string $booking): JsonResponse
+    {
+        $this->owner->decide($request->user(), $org, $screen, $booking, false, $request->validated('note'));
+
+        return ApiResponse::success($this->owner->schedule($request->user(), $org, $screen, $this->day($request->validated('date'))), 'Rejected. The advertiser was refunded.');
     }
 
     private function day(?string $date): CarbonImmutable

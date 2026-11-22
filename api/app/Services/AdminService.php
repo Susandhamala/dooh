@@ -65,7 +65,7 @@ class AdminService
             'users' => $this->users->counts(),
             'documents' => $this->documents->countByStatus() + ['pending' => 0, 'approved' => 0, 'rejected' => 0],
             'ads' => $this->creatives->countByStatus() + ['processing' => 0, 'failed' => 0, 'in_review' => 0, 'approved' => 0, 'rejected' => 0],
-            'bookings' => $this->bookings->countByStatus() + ['scheduled' => 0, 'live' => 0, 'completed' => 0, 'cancelled' => 0, 'rejected' => 0],
+            'bookings' => $this->bookings->countByStatus() + ['awaiting_owner' => 0, 'scheduled' => 0, 'live' => 0, 'completed' => 0, 'cancelled' => 0, 'rejected' => 0],
             'screens' => $this->screens->countByStatus() + ['draft' => 0, 'active' => 0, 'paused' => 0],
             'money' => array_map(fn (int $p) => Money::toRupees($p), $money),
             'daily' => array_map(fn ($day, $p) => ['date' => $day, 'amount' => Money::toRupees($p)], array_keys($daily), $daily),

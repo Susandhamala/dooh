@@ -54,9 +54,28 @@ class BookingRepository
     {
         return $this->active($screen)
             ->whereRaw('date_range @> ?::date', [$day->toDateString()])
-            ->with(['creative', 'organisation'])
+            ->with(['creative', 'organisation', 'bookedBy'])
             ->orderByRaw('loop_order NULLS LAST, id')
             ->get();
+    }
+
+    /**
+     * Bookings on a screen waiting for the owner, oldest first.
+     *
+     * @return Collection<int, Booking>
+     */
+    public function awaitingOn(Screen $screen): Collection
+    {
+        return $this->active($screen)
+            ->where('status', BookingStatus::AwaitingOwner)
+            ->with(['creative', 'organisation', 'bookedBy'])
+            ->orderBy('id')
+            ->get();
+    }
+
+    public function findOnScreen(Screen $screen, string $uuid): ?Booking
+    {
+        return $this->active($screen)->where('uuid', $uuid)->first();
     }
 
     /**
@@ -79,9 +98,10 @@ class BookingRepository
         $q = fn () => Booking::query()->whereIn('screen_id', $screenIds);
 
         return [
+            'waiting' => $q()->where('status', BookingStatus::AwaitingOwner)->count(),
             'live' => $q()->where('status', BookingStatus::Live)->count(),
             'upcoming' => $q()->where('status', BookingStatus::Scheduled)->count(),
-            'today' => $q()->whereIn('status', [BookingStatus::Scheduled, BookingStatus::Live])->whereRaw('date_range @> ?::date', [$today->toDateString()])->count(),
+            'today' => $q()->whereIn('status', [BookingStatus::AwaitingOwner, BookingStatus::Scheduled, BookingStatus::Live])->whereRaw('date_range @> ?::date', [$today->toDateString()])->count(),
             'earned' => (string) ($q()->selectRaw('coalesce(sum(plays_done * price_per_play), 0) as s')->value('s') ?? 0),
         ];
     }
@@ -101,7 +121,7 @@ class BookingRepository
     /** @return Collection<int, Booking> */
     public function openForCreative(Creative $creative): Collection
     {
-        return $creative->bookings()->whereIn('status', [BookingStatus::Scheduled, BookingStatus::Live])->get();
+        return $creative->bookings()->whereIn('status', [BookingStatus::AwaitingOwner, BookingStatus::Scheduled, BookingStatus::Live])->get();
     }
 
     /**
@@ -113,7 +133,7 @@ class BookingRepository
     public function dueForUpdate(CarbonImmutable $today): Collection
     {
         return Booking::query()
-            ->whereIn('status', [BookingStatus::Scheduled, BookingStatus::Live])
+            ->whereIn('status', [BookingStatus::AwaitingOwner, BookingStatus::Scheduled, BookingStatus::Live])
             ->whereRaw('lower(date_range) <= ?::date', [$today->toDateString()])
             ->get();
     }
@@ -134,7 +154,7 @@ class BookingRepository
     {
         return Booking::query()
             ->with(['screen', 'creative', 'organisation'])
-            ->when($status === 'active', fn ($q) => $q->whereIn('status', [BookingStatus::Scheduled, BookingStatus::Live]))
+            ->when($status === 'active', fn ($q) => $q->whereIn('status', [BookingStatus::AwaitingOwner, BookingStatus::Scheduled, BookingStatus::Live]))
             ->when($status && $status !== 'active', fn ($q) => $q->where('status', $status))
             ->when($search, fn ($q) => $q->where(fn ($w) => $w
                 ->whereHas('screen', fn ($s) => $s->where('name', 'ilike', "%{$search}%"))

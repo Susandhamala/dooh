@@ -63,6 +63,8 @@ dataset('foreign endpoints', [
     'owner dashboard' => ['GET', '/orgs/{own}/owner/overview'],
     'screen schedule' => ['GET', '/orgs/{own}/screens/{screen}/schedule'],
     'move booking' => ['POST', '/orgs/{own}/screens/{screen}/bookings/{booking}/move'],
+    'approve booking' => ['POST', '/orgs/{own}/screens/{screen}/bookings/{booking}/approve'],
+    'reject booking' => ['POST', '/orgs/{own}/screens/{screen}/bookings/{booking}/reject'],
 ]);
 
 function foreignUrl(string $path): string

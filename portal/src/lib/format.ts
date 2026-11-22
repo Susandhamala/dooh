@@ -74,7 +74,7 @@ const STATUSES: Record<string, { label: string; tone: Tone }> = {
   // Bookings
   draft: { label: 'Draft', tone: 'neutral' },
   checking: { label: 'Ad in review', tone: 'warning' },
-  awaiting_owner: { label: 'Awaiting owner', tone: 'warning' },
+  awaiting_owner: { label: 'Waiting for owner', tone: 'warning' },
   approved: { label: 'Approved', tone: 'success' },
   scheduled: { label: 'Booked', tone: 'teal' },
   live: { label: 'Live', tone: 'success' },
